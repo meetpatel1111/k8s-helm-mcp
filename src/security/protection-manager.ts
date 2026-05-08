@@ -75,6 +75,7 @@ export class ProtectionManager {
     "k8s_changes_since",
     "k8s_blast_radius",
     "k8s_workload_diff",
+    "k8s_silent_killers",
   ]);
 
   // Infrastructure Protection Mode - blocks destructive operations

@@ -941,11 +941,11 @@ All tools starting with `k8s_delete_`, `k8s_bulk_delete_`, `k8s_helm_uninstall`,
 | Monitoring & Observability | 17 |
 | Helm Tools | 40 |
 | Advanced & Diagnostic | 44 |
-| **Total** | **264** |
+| **Total** | **268** |
 
 ---
 
-*Generated for k8s-helm-mcp v0.27.0*
+*Generated for k8s-helm-mcp v0.28.0*
 
 ---
 

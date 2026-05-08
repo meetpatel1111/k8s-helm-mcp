@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="300" alt="k8s-helm-mcp v0.27.0 logo">
+  <img src="assets/logo.png" width="300" alt="k8s-helm-mcp v0.28.0 logo">
 </p>
 
 # k8s-helm-mcp
@@ -23,7 +23,7 @@
 [![Works with Codex](https://img.shields.io/badge/Works_with-Codex-black?logo=openai)](https://openai.com/)
 [![Works with Codex CLI](https://img.shields.io/badge/Works_with-Codex_CLI-black?logo=openai)](https://openai.com/)
 
-Production-grade Kubernetes MCP (Model Context Protocol) Server v0.27.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
+Production-grade Kubernetes MCP (Model Context Protocol) Server v0.28.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
 
 > [!TIP]
 > **Status:** This package works brilliantly with **Claude Desktop**, **Claude Code**, **Gemini CLI**, **Codex**, **Codex CLI**, **Windsurf**, **Antigravity**, **Cursor**, and **GitHub Copilot**! For most clients, you can add it using `npx -y k8s-helm-mcp`.
@@ -37,7 +37,7 @@ This MCP server provides comprehensive Kubernetes cluster management capabilitie
 
 ## Features
 
-### 267 Kubernetes & Helm Management Tools
+### 268 Kubernetes & Helm Management Tools
 
 | Category | Tools |
 |----------|-------|
@@ -48,7 +48,8 @@ This MCP server provides comprehensive Kubernetes cluster management capabilitie
 | **Networking** | Services, endpoints, ingresses, network policies, DNS test, service topology |
 | **Storage** | PersistentVolumes, PVCs, StorageClasses, unbound PVC detection, storage summary |
 | **Security & RBAC** | ServiceAccounts, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, Secrets, ConfigMaps, privileged pod detection, certificates, **Secret Scrubbing** (PII/credential redaction) |
-| **Monitoring & SRE** | Events, **SRE Incident Snapshot**, **Cluster Changes Since**, resource quotas, limit ranges, crash loop detection, pod/node metrics, health score, optimization suggestions |
+| **Monitoring** | Events, resource quotas, limit ranges, crash loop detection, pod/node metrics, health score, optimization suggestions |
+| **SRE** | k8s_incident_snapshot, k8s_changes_since ,  k8s_blast_radius, k8s_workload_diff,silent-killers |
 | **Configuration** | Apply manifests, export YAML, validate manifests, namespace management, patch, edit, diff, wait, watch |
 | **Advanced** | Raw API queries, pod failure analysis, bulk operations, orphaned resource detection, resource age reports |
 | **Helm** | 40+ tools for releases, charts, repos, plugins, registry (install, upgrade, rollback, lint, template, search) |
@@ -768,7 +769,7 @@ For a complete list of all 268 tools and their kubectl equivalents, see **[TOOLS
 | **Advanced** | 20 | Bulk ops, analysis, optimization, wait, proxy |
 | **Templates** | 4 | Resource templates |
 | **WebSocket** | 4 | Exec, attach, port-forward, logs |
-| **SRE TOOLS** | 3 | Incident snapshot, Change since , Blast radius |
+| **SRE TOOLS** | 5 | Incident snapshot, Change since , Blast radius, k8s_workload_diff, Silent_killers |
 
 **Total: 268 tools**
 

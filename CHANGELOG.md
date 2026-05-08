@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.28.0] - 2026-05-07
+
+### Added
+- **SRE Preventive Audit**: `k8s_silent_killers` tool — scheduled audit that surfaces slow-burning issues that quietly take down clusters weeks later. Run nightly; get a Slack alert when something is about to fire.
+- **Risk Categories**: TLS cert expiry (Secrets, webhook caBundles, APIService caBundles within configurable threshold); unhealthy webhooks (`failurePolicy=Fail` pointing at missing services or zero-endpoint services — the "expired cert + Fail policy = apiserver hang" classic); stale APIServices (`Available=False` for >24h); stuck finalizers (namespaces / pods stuck `Terminating` for >24h); orphan PVCs (bound PVCs with no using pod for >30 days).
+- **Severity Classification**: critical (cert expiring within 7 days, webhook with Fail policy + missing service, stuck namespace finalizer); warning (cert within 30 days, stale APIService, stuck pod finalizer); info (orphan PVCs, healthy-but-noteworthy webhook configs).
+- **Configurability**: `certWarnDays` (default 30), `certCriticalDays` (default 7), `staleApiServiceHours` (default 24), `stuckTerminatingHours` (default 24), `orphanPvcDays` (default 30).
+- **Security**: `k8s_silent_killers` registered in `READ_ONLY_TOOLS` — read-only by design.
+- **Testing**: 28-test unit suite covering cert decoding, webhook health classification, finalizer-age math, severity rollup, and graceful degradation when subsystems are unavailable.
+
+
 ## [0.27.0] - 2026-05-07
 
 ### Added
