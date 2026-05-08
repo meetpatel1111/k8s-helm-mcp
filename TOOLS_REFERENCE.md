@@ -1,6 +1,6 @@
 # K8s MCP Server - Complete Tool Reference
 
-**Version: 0.26.2** | **Total Tools: 267**
+**Version: 0.28.0** | **Total Tools: 269**
 
 This document provides comprehensive reference for all tools in the Kubernetes MCP Server, including tool catalogs, kubectl mappings, and natural language patterns. This server is optimized for use with **Claude Desktop**, **Claude Code**, **Codex**, **Windsurf**, **Antigravity**, and **Cursor**.
 
@@ -304,12 +304,20 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 | `k8s_container_image_report` | Report on all container images used in the cluster | `namespace?`, `filter?` |
 | `k8s_suggest_optimizations` | Analyze resources and suggest optimizations | `namespace?` |
 | `k8s_analyze_pod_failure` | AI-style diagnosis of why a pod is failing | `name`, `namespace?` |
-| `k8s_incident_snapshot` | Collect SRE triage data (Pods, Events, Rollouts, Nodes) for rapid incident response | `namespace?`, `limit?`, `includeNodes?` |
-| `k8s_changes_since` | Get time-windowed diff of cluster resource changes with attribution | `since` (duration), `namespace?`, `resourceTypes?` |
 | `k8s_get_pod_metrics` | Get pod metrics (CPU/Memory) - requires metrics-server | `name?`, `namespace?` |
 | `k8s_get_node_metrics` | Get node metrics (CPU/Memory) - requires metrics-server | `name?` |
 | `k8s_top_pod` | Display resource usage (CPU/Memory) for pods | `name?`, `namespace?`, `allNamespaces?: boolean`, `containers?: boolean`, `sortBy?` |
 | `k8s_top_node` | Display resource usage (CPU/Memory) for nodes | `name?` |
+
+### SRE Tooling
+
+| Tool | Description | Key Parameters |
+|------|-------------|----------------|
+| `k8s_incident_snapshot` | Collect SRE triage data (Pods, Events, Rollouts, Nodes) for rapid incident response | `namespace?`, `limit?`, `includeNodes?` |
+| `k8s_changes_since` | Get time-windowed diff of cluster resource changes with attribution | `since` (duration), `namespace?`, `resourceTypes?` |
+| `k8s_blast_radius` | Simulate deletion blast radius for a resource (shows dependents, services, HPA, PDB impact) | `kind` (required), `name` (required), `namespace?`, `dryRun?: boolean` |
+| `k8s_workload_diff` | Compare two workloads and return categorized structured diff (image, replicas, env, scheduling) | `sourceKind`, `sourceName`, `targetKind`, `targetName`, `namespace?`, `targetNamespace?`, `ignoreLabels?`, `ignoreAnnotations?`, `ignoreEnvVars?` |
+| `k8s_silent_killers` | Preventive audit for slow-burning cluster issues (expiring certs, unhealthy webhooks, stale APIServices, stuck finalizers, orphan PVCs) | `certWarnDays?`, `certCriticalDays?`, `staleApiServiceHours?`, `stuckTerminatingHours?`, `orphanPvcDays?` |
 
 ### Helm Tools
 
@@ -729,31 +737,6 @@ All tools starting with `k8s_delete_`, `k8s_bulk_delete_`, `k8s_helm_uninstall`,
 
 ---
 
-## Tool Categories Summary
-
-| Category | Tool Count |
-|----------|------------|
-| Protection Mode Tools | 4 |
-| Server Management | 3 |
-| Cluster & Context | 20 |
-| Node Management | 13 |
-| Pod Management | 22 |
-| Workload Management | 30 |
-| Networking & Services | 17 |
-| Storage Management | 11 |
-| Security & RBAC | 28 |
-| Configuration & Secrets | 14 |
-| Monitoring & Observability | 15 |
-| Helm Tools | 40 |
-| "List deployments in production" | `k8s_list_deployments` | namespace="production" |
-| "What services are running?" | `k8s_list_services` | namespace (optional) |
-| "Show all nodes" | `k8s_list_nodes` | - |
-| "Display all namespaces" | `k8s_list_namespaces` | - |
-| "List jobs in staging" | `k8s_list_jobs` | namespace="staging" |
-| "Show cronjobs" | `k8s_list_cronjobs` | namespace (optional) |
-| "List statefulsets" | `k8s_list_statefulsets` | namespace (optional) |
-| "Show daemonsets" | `k8s_list_daemonsets` | namespace (optional) |
-
 #### Getting Details
 
 | User Query Pattern | Tool | Key Parameters |
@@ -865,6 +848,11 @@ All tools starting with `k8s_delete_`, `k8s_bulk_delete_`, `k8s_helm_uninstall`,
 | "Analyze pod failure" | `k8s_analyze_pod_failure` | name, namespace |
 | "Optimization suggestions" | `k8s_suggest_optimizations` | namespace (optional) |
 | "Find orphaned resources" | `k8s_find_orphaned_resources` | namespace (optional) |
+| "Compare staging vs prod" | `k8s_workload_diff` | sourceKind, sourceName, targetKind, targetName |
+| "What would break if I delete this?" | `k8s_blast_radius` | kind, name, namespace |
+| "Run a cluster health audit" | `k8s_silent_killers` | certWarnDays, certCriticalDays |
+| "Incident snapshot for namespace" | `k8s_incident_snapshot` | namespace |
+| "What changed in the last hour?" | `k8s_changes_since` | since="1h", namespace |
 
 ---
 
@@ -928,20 +916,23 @@ All tools starting with `k8s_delete_`, `k8s_bulk_delete_`, `k8s_helm_uninstall`,
 
 | Category | Tool Count |
 |----------|------------|
-| Protection Mode Tools | 4 |
-| Server Management | 3 |
-| Cluster & Context | 20 |
-| Node Management | 13 |
-| Pod Management | 22 |
-| Workload Management | 30 |
-| Networking & Services | 17 |
+| Server Management | 8 |
+| Cluster & Context | 21 |
+| Node Management | 10 |
+| Pod Management | 13 |
+| Workload Management | 42 |
+| Networking & Services | 18 |
 | Storage Management | 11 |
-| Security & RBAC | 28 |
-| Configuration & Secrets | 14 |
-| Monitoring & Observability | 17 |
-| Helm Tools | 40 |
-| Advanced & Diagnostic | 44 |
-| **Total** | **268** |
+| Security & RBAC | 31 |
+| Configuration & Secrets | 19 |
+| Monitoring & Observability | 14 |
+| Diagnostics | 6 |
+| Templates | 2 |
+| WebSocket | 5 |
+| SRE Tools | 5 |
+| Helm Tools | 39 |
+| Advanced | 25 |
+| **Total** | **269** |
 
 ---
 

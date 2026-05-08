@@ -37,7 +37,7 @@ This MCP server provides comprehensive Kubernetes cluster management capabilitie
 
 ## Features
 
-### 268 Kubernetes & Helm Management Tools
+### 269 Kubernetes & Helm Management Tools
 
 | Category | Tools |
 |----------|-------|
@@ -49,7 +49,7 @@ This MCP server provides comprehensive Kubernetes cluster management capabilitie
 | **Storage** | PersistentVolumes, PVCs, StorageClasses, unbound PVC detection, storage summary |
 | **Security & RBAC** | ServiceAccounts, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, Secrets, ConfigMaps, privileged pod detection, certificates, **Secret Scrubbing** (PII/credential redaction) |
 | **Monitoring** | Events, resource quotas, limit ranges, crash loop detection, pod/node metrics, health score, optimization suggestions |
-| **SRE** | k8s_incident_snapshot, k8s_changes_since ,  k8s_blast_radius, k8s_workload_diff,silent-killers |
+| **SRE** | Incident snapshot, changes-since triage, blast radius simulation, workload diff (drift detection), silent killers (preventive audit) |
 | **Configuration** | Apply manifests, export YAML, validate manifests, namespace management, patch, edit, diff, wait, watch |
 | **Advanced** | Raw API queries, pod failure analysis, bulk operations, orphaned resource detection, resource age reports |
 | **Helm** | 40+ tools for releases, charts, repos, plugins, registry (install, upgrade, rollback, lint, template, search) |
@@ -751,27 +751,30 @@ To integrate this server, add the configuration below to your `claude_desktop_co
 
 ## Tool Reference
 
-For a complete list of all 268 tools and their kubectl equivalents, see **[TOOLS_REFERENCE.md](TOOLS_REFERENCE.md)**.
+For a complete list of all 269 tools and their kubectl equivalents, see **[TOOLS_REFERENCE.md](TOOLS_REFERENCE.md)**.
 
 ### Tool Categories
 
 | Category | Count | Sample Tools |
 |----------|-------|--------------|
-| **Cluster** | 17 | Context, namespace, API versions, resource quotas, priority classes |
-| **Nodes** | 10 | List, cordon, drain, taints |
-| **Pods** | 12 | Logs, exec, debug, delete |
-| **Workloads** | 42 | Deployments, Jobs, CronJobs, scaling, PodDisruptionBudgets |
-| **Networking** | 17 | Services, ingress, DNS, topology, endpoints, endpointslices |
-| **Storage** | 11 | PVs, PVCs, StorageClasses |
+| **Cluster** | 21 | Context, namespace, API versions, resource quotas, priority classes, leases |
+| **Nodes** | 10 | List, cordon, drain, taints, labels, pressure status |
+| **Pods** | 13 | Logs, exec, debug, delete, run, bulk delete |
+| **Workloads** | 42 | Deployments, Jobs, CronJobs, scaling, PodDisruptionBudgets, HPA |
+| **Networking** | 18 | Services, ingress, DNS, topology, endpoints, endpointslices, network policies |
+| **Storage** | 11 | PVs, PVCs, StorageClasses, storage summary |
 | **Security** | 31 | RBAC, secrets, roles, bindings, auth reconcile, certificates |
-| **Monitoring** | 11 | Events, metrics, health score |
-| **Configuration** | 14 | Apply, edit, diff, validate, kustomize, last-applied |
-| **Advanced** | 20 | Bulk ops, analysis, optimization, wait, proxy |
-| **Templates** | 4 | Resource templates |
-| **WebSocket** | 4 | Exec, attach, port-forward, logs |
-| **SRE TOOLS** | 5 | Incident snapshot, Change since , Blast radius, k8s_workload_diff, Silent_killers |
+| **Monitoring** | 14 | Events, metrics, health score, crash loop detection, restart report |
+| **Configuration** | 19 | Apply, edit, diff, validate, kustomize, last-applied, convert, wait |
+| **Advanced** | 25 | Bulk ops, analysis, optimization, raw API, proxy, kubectl passthrough |
+| **Diagnostics** | 6 | Namespace summary, resource age, pod log search, resource comparison |
+| **Templates** | 2 | Quick deploy, resource templates |
+| **WebSocket** | 5 | Exec, attach, port-forward, logs, watch |
+| **SRE** | 5 | Incident snapshot, changes-since, blast radius, workload diff, silent killers |
+| **Helm** | 39 | Releases, charts, repos, plugins, registry, lint, template, search |
+| **Server** | 8 | Server info, health, metrics, stop, protection mode toggles |
 
-**Total: 268 tools**
+**Total: 269 tools** (some tools are registered in multiple categories; unique count is 269)
 
 ### Infrastructure Protection
 
@@ -1083,27 +1086,33 @@ See [SECURITY.md](SECURITY.md) for detailed documentation.
 
 ### Tool Organization
 
-Tools are organized by domain across 14 TypeScript files:
+Tools are organized by domain across 19 TypeScript files:
 
 | File | Tools | Domain |
 |------|-------|--------|
 | `cluster.ts` | 18 | Context switching, cluster info, namespaces, API versions, priority classes, leases |
+| `multi-cluster.ts` | 3 | Multi-cluster management and federation |
 | `nodes.ts` | 10 | Node management, cordon, drain, taints, labels |
 | `pods.ts` | 13 | Pod operations, logs, exec, debugging |
-| `workloads.ts` | 45 | Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, scaling, rollouts, HPAs |
+| `workloads.ts` | 44 | Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, scaling, rollouts, HPAs |
 | `networking.ts` | 18 | Services, ingresses, network policies, DNS, expose |
 | `storage.ts` | 11 | PVs, PVCs, StorageClasses |
 | `security.ts` | 31 | RBAC, secrets, service accounts, policies, certificates |
 | `monitoring.ts` | 14 | Events, metrics, quotas, health scores, resource usage |
-| `config.ts` | 21 | Manifests, apply, export, edit, cp, diff, kubectl |
-| `advanced.ts` | 26 | Raw API queries, bulk ops, analysis, optimization |
+| `config.ts` | 20 | Manifests, apply, export, edit, cp, diff, kustomize |
+| `advanced.ts` | 25 | Raw API queries, bulk ops, analysis, optimization |
+| `diagnostics.ts` | 6 | Cluster diagnostics, troubleshooting, connectivity checks |
 | `templates.ts` | 2 | Quick deploy templates |
 | `websocket.ts` | 5 | Interactive exec, attach, port-forward, log streaming |
-| `diagnostics.ts` | 6 | Cluster diagnostics, troubleshooting, connectivity checks |
-| `multi-cluster.ts` | 3 | Multi-cluster management and federation |
+| `incident-snapshot.ts` | 1 | SRE triage data collection for rapid incident response |
+| `changes-since.ts` | 1 | Time-windowed diff of cluster resource changes |
+| `blast-radius.ts` | 1 | Simulate deletion impact and blast radius analysis |
+| `workload-diff.ts` | 1 | Drift detection between workloads (staging vs prod) |
+| `silent-killers.ts` | 1 | Preventive audit for slow-burning cluster issues |
 | `helm-tools/` | 39 | Helm releases, charts, repos, plugins, registry |
+| `index.ts` | 8 | Server info, health, metrics, stop, protection mode toggles |
 
-**Total: 262+ tools**
+**Total: 269 unique tools** (some tools registered in multiple files are counted once)
 
 ### Core Components
 

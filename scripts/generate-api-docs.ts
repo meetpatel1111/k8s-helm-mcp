@@ -25,6 +25,9 @@ import { registerWorkloadTools } from '../src/k8s-tools/workloads.js';
 import { registerAdvancedTools } from '../src/k8s-tools/advanced.js';
 import { registerIncidentSnapshotTools } from '../src/k8s-tools/incident-snapshot.js';
 import { registerChangesSinceTools } from '../src/k8s-tools/changes-since.js';
+import { registerBlastRadiusTools } from '../src/k8s-tools/blast-radius.js';
+import { registerWorkloadDiffTools } from '../src/k8s-tools/workload-diff.js';
+import { registerSilentKillersTools } from '../src/k8s-tools/silent-killers.js';
 import { registerMultiClusterTools } from '../src/k8s-tools/multi-cluster.js';
 
 import { registerHelmChartManagementTools } from '../src/helm-tools/chart-management.js';
@@ -190,7 +193,7 @@ function generateApiDocs(): string {
     { name: 'WebSocket Tools', register: registerWebSocketTools, description: 'Real-time streaming, exec, and port forwarding' },
     { name: 'Workloads Tools', register: registerWorkloadTools, description: 'Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs' },
     { name: 'Multi-Cluster Tools', register: registerMultiClusterTools, description: 'Operations across multiple clusters and contexts' },
-    { name: 'SRE Tools', register: (client: any) => [...registerIncidentSnapshotTools(client), ...registerChangesSinceTools(client)], description: 'SRE diagnostic and cluster state change tracking tools' },
+    { name: 'SRE Tools', register: (client: any) => [...registerIncidentSnapshotTools(client), ...registerChangesSinceTools(client), ...registerBlastRadiusTools(client), ...registerWorkloadDiffTools(client), ...registerSilentKillersTools(client)], description: 'SRE diagnostic, incident triage, blast radius simulation, drift detection, and preventive audit tools' },
     { name: 'Advanced Tools', register: registerAdvancedTools, description: 'Advanced operations including batch processing and resource comparison' },
     { name: 'Server Management', register: (client: any) => {
       // Manual registration for server-internal tools
@@ -273,22 +276,100 @@ function generateApiDocs(): string {
             },
           },
           handler: () => {}
+        },
+        {
+          tool: {
+            name: "k8s_toggle_protection_mode",
+            description: "Toggle infrastructure protection mode on/off. When enabled, blocks destructive operations like delete, drain, cordon, and rollback.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                enabled: {
+                  type: "boolean",
+                  description: "Enable (true) or disable (false) infrastructure protection mode",
+                },
+              },
+              required: ["enabled"],
+            },
+          },
+          handler: () => {}
+        },
+        {
+          tool: {
+            name: "k8s_toggle_strict_protection_mode",
+            description: "Toggle strict protection mode on/off. When enabled, only read-only operations are allowed (list, get, describe, logs).",
+            inputSchema: {
+              type: "object",
+              properties: {
+                enabled: {
+                  type: "boolean",
+                  description: "Enable (true) or disable (false) strict protection mode",
+                },
+              },
+              required: ["enabled"],
+            },
+          },
+          handler: () => {}
+        },
+        {
+          tool: {
+            name: "k8s_toggle_no_delete_mode",
+            description: "Toggle no-delete protection mode on/off. When enabled, blocks all deletion operations while allowing other modifications.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                enabled: {
+                  type: "boolean",
+                  description: "Enable (true) or disable (false) no-delete protection mode",
+                },
+              },
+              required: ["enabled"],
+            },
+          },
+          handler: () => {}
+        },
+        {
+          tool: {
+            name: "k8s_toggle_all_protection_modes",
+            description: "Toggle all protection modes on/off at once. Convenience tool to enable or disable infrastructure, strict, and no-delete protection simultaneously.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                enabled: {
+                  type: "boolean",
+                  description: "Enable (true) or disable (false) all protection modes",
+                },
+              },
+              required: ["enabled"],
+            },
+          },
+          handler: () => {}
         }
       ];
-    }, description: 'Internal MCP server status, metrics, and lifecycle management' },
+    }, description: 'Internal MCP server status, metrics, lifecycle management, and protection mode controls' },
   ];
+
+  // Deduplicate tools across categories (some tools are registered in multiple files)
+  const seenTools = new Set<string>();
 
   for (const cat of k8sCategories) {
     const tools = (cat.register as any)(mockClient);
-    categories.push({
-      name: cat.name,
-      description: cat.description,
-      tools: tools.map((t: ToolRegistration) => ({
+    const uniqueTools = tools
+      .map((t: ToolRegistration) => ({
         name: t.tool.name,
         description: t.tool.description || '',
         category: cat.name,
         inputSchema: t.tool.inputSchema,
-      })),
+      }))
+      .filter((t: ToolInfo) => {
+        if (seenTools.has(t.name)) return false;
+        seenTools.add(t.name);
+        return true;
+      });
+    categories.push({
+      name: cat.name,
+      description: cat.description,
+      tools: uniqueTools,
     });
   }
 
@@ -316,15 +397,22 @@ function generateApiDocs(): string {
 
   for (const cat of helmCategories) {
     const tools = (cat.register as any)(mockClient);
-    categories.push({
-      name: cat.name,
-      description: cat.description,
-      tools: tools.map((t: ToolRegistration) => ({
+    const uniqueTools = tools
+      .map((t: ToolRegistration) => ({
         name: t.tool.name,
         description: t.tool.description || '',
         category: cat.name,
         inputSchema: t.tool.inputSchema,
-      })),
+      }))
+      .filter((t: ToolInfo) => {
+        if (seenTools.has(t.name)) return false;
+        seenTools.add(t.name);
+        return true;
+      });
+    categories.push({
+      name: cat.name,
+      description: cat.description,
+      tools: uniqueTools,
     });
   }
 

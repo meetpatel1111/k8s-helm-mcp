@@ -2,11 +2,11 @@
 
 This document provides auto-generated API documentation for all Kubernetes and Helm tools.
 
-**Generated:** 2026-05-08T09:00:02.225Z
+**Generated:** 2026-05-08T11:35:05.909Z
 
 ## Summary
 
-- **Total Tools:** 268
+- **Total Tools:** 269
 - **Categories:** 35
 - **Kubernetes Tools:** 16 categories
 - **Helm Tools:** 19 categories
@@ -14,7 +14,7 @@ This document provides auto-generated API documentation for all Kubernetes and H
 ## Table of Contents
 
 - [Cluster Tools](#cluster-tools) (18 tools)
-- [Config Tools](#config-tools) (21 tools)
+- [Config Tools](#config-tools) (20 tools)
 - [Diagnostics Tools](#diagnostics-tools) (6 tools)
 - [Monitoring Tools](#monitoring-tools) (14 tools)
 - [Networking Tools](#networking-tools) (18 tools)
@@ -24,11 +24,11 @@ This document provides auto-generated API documentation for all Kubernetes and H
 - [Storage Tools](#storage-tools) (11 tools)
 - [Templates Tools](#templates-tools) (2 tools)
 - [WebSocket Tools](#websocket-tools) (5 tools)
-- [Workloads Tools](#workloads-tools) (45 tools)
+- [Workloads Tools](#workloads-tools) (43 tools)
 - [Multi-Cluster Tools](#multi-cluster-tools) (3 tools)
-- [SRE Tools](#sre-tools) (2 tools)
-- [Advanced Tools](#advanced-tools) (26 tools)
-- [Server Management](#server-management) (4 tools)
+- [SRE Tools](#sre-tools) (5 tools)
+- [Advanced Tools](#advanced-tools) (23 tools)
+- [Server Management](#server-management) (8 tools)
 - [Helm Chart Management](#helm-chart-management) (5 tools)
 - [Helm Chart Template](#helm-chart-template) (1 tools)
 - [Helm Dependency Management](#helm-dependency-management) (1 tools)
@@ -194,7 +194,7 @@ Remove a kubeconfig property (like kubectl config unset). Removes a cluster, con
 
 Kubeconfig management and configuration operations
 
-**Total Tools:** 21
+**Total Tools:** 20
 
 ### k8s_apply_manifest
 
@@ -409,17 +409,6 @@ Build Kubernetes manifests from a kustomization directory (like kubectl kustomiz
 - **path** (stringoptional) (default: "."): Path to directory containing kustomization.yaml (local path or git URL)
 - **output** (stringoptional) (default: "yaml") [enum: yaml, json]: Output format
 - **enableHelm** (booleanoptional) (default: false): Enable helm inflation (if kustomize supports it)
-
-### k8s_diff
-
-Diff a file or manifest against the live configuration (like kubectl diff). Shows differences between local manifest and running resource.
-
-**Parameters:**
-
-- **manifest** (stringoptional): YAML/JSON manifest content to compare
-- **resource** (stringoptional): Resource type (pod, deployment, service, etc.) - alternative to manifest
-- **name** (stringoptional): Resource name - alternative to manifest
-- **namespace** (stringoptional) (default: "default"): Namespace
 
 ## Diagnostics Tools
 
@@ -1639,7 +1628,7 @@ Watch resources for changes in real-time (like kubectl get --watch). Returns Web
 
 Deployments, StatefulSets, DaemonSets, Jobs, and CronJobs
 
-**Total Tools:** 45
+**Total Tools:** 43
 
 ### k8s_list_deployments
 
@@ -1906,20 +1895,6 @@ Update container image in a deployment (like kubectl set image)
 - **container** (stringoptional): Container name (defaults to first container if not specified)
 - **image** (string, required): New container image
 
-### k8s_expose
-
-Expose a resource as a new service (like kubectl expose)
-
-**Parameters:**
-
-- **resource** (string, required): Resource type (deployment, pod, replicaset, etc.)
-- **name** (string, required): Resource name
-- **namespace** (stringoptional) (default: "default"): Namespace
-- **port** (number, required): Service port
-- **targetPort** (numberoptional): Target container port (defaults to service port)
-- **type** (stringoptional) (default: "ClusterIP") [enum: ClusterIP, NodePort, LoadBalancer, ExternalName]: Service type
-- **serviceName** (stringoptional): Name for the new service (defaults to resource name)
-
 ### k8s_autoscale
 
 Auto-scale a deployment (like kubectl autoscale)
@@ -2027,20 +2002,6 @@ Restart a DaemonSet by updating its pod template (like kubectl rollout restart d
 
 - **name** (string, required): Name of the DaemonSet to restart
 - **namespace** (stringoptional) (default: "default"): Namespace of the DaemonSet
-
-### k8s_autoscale
-
-Create a HorizontalPodAutoscaler for a deployment (like kubectl autoscale)
-
-**Parameters:**
-
-- **name** (string, required): Name for the HPA
-- **deployment** (string, required): Name of the deployment to autoscale
-- **namespace** (stringoptional) (default: "default"): Namespace
-- **minReplicas** (numberoptional) (default: 1): Minimum number of replicas
-- **maxReplicas** (numberoptional) (default: 10): Maximum number of replicas
-- **cpuPercent** (numberoptional) (default: 80): Target CPU utilization percentage
-- **memoryPercent** (numberoptional): Target memory utilization percentage
 
 ### k8s_list_hpa
 
@@ -2151,9 +2112,9 @@ Add a new kubeconfig file path to the search list and optionally validate it
 
 ## SRE Tools
 
-SRE diagnostic and cluster state change tracking tools
+SRE diagnostic, incident triage, blast radius simulation, drift detection, and preventive audit tools
 
-**Total Tools:** 2
+**Total Tools:** 5
 
 ### k8s_incident_snapshot
 
@@ -2180,11 +2141,60 @@ Returns a time-windowed diff of cluster state. Lists resources created, modified
 - **maxResults** (numberoptional) (default: 50): Maximum number of resource changes to return. Defaults to 50.
 - **includeEvents** (booleanoptional) (default: true): Whether to include relevant cluster events (scaling, image updates, etc.). Defaults to true.
 
+### k8s_blast_radius
+
+Pre-flight simulator for destructive Kubernetes operations. Analyzes the impact of drain/cordon/delete/scale BEFORE executing, returning safe/risky/unsafe verdict with structured reasons (PDB violations, last-replica risks, dependent Services, stateful workload concerns) and machine-readable details. Read-only by design — does NOT execute the action. Safe under all protection modes.
+
+**Parameters:**
+
+- **action** (string, required) [enum: drain, cordon, delete, scale]: The destructive action to simulate. drain/cordon require node; delete/scale require kind+name (and namespace).
+- **node** (stringoptional): Node name. Required for drain or cordon.
+- **kind** (stringoptional) [enum: Deployment, StatefulSet, DaemonSet, Service]: Resource kind. Required for delete or scale.
+- **name** (stringoptional): Resource name. Required for delete or scale.
+- **namespace** (stringoptional) (default: "default"): Namespace of the resource. Defaults to 'default' for delete or scale.
+- **replicas** (numberoptional): Target replica count. Required for scale.
+
+### k8s_workload_diff
+
+Compares two workloads (same kind, e.g. staging vs prod Deployment) and returns a categorized diff: image tags, replicas, resource requests/limits, env vars, ConfigMap/Secret refs, labels, scheduling, HPA settings, PDB coverage. Returns severity per finding (critical/warning/info) and a verdict (in_sync, drift_detected, comparison_failed). Use to answer 'how is staging different from prod' or 'what changed between blue and green'. Read-only and safe under all protection modes.
+
+**Parameters:**
+
+- **source** (object, required): Source workload (one side of the comparison).
+  - **kind** (string, required) [enum: Deployment, StatefulSet, DaemonSet]: 
+  - **name** (string, required): 
+  - **namespace** (stringoptional) (default: "default"): 
+- **target** (object, required): Target workload (the other side of the comparison). Must be the same kind as source.
+  - **kind** (string, required) [enum: Deployment, StatefulSet, DaemonSet]: 
+  - **name** (string, required): 
+  - **namespace** (stringoptional) (default: "default"): 
+- **includeHpa** (booleanoptional) (default: true): Include HorizontalPodAutoscaler comparison. Defaults to true.
+- **includePdb** (booleanoptional) (default: true): Include PodDisruptionBudget coverage comparison. Defaults to true.
+- **ignoreLabels** (arrayoptional): Label keys to ignore in the comparison (e.g. 'env', 'tier'). Useful when intentional differences would otherwise be reported as drift.
+  Items: string
+- **ignoreAnnotations** (arrayoptional): Annotation keys to ignore in the comparison.
+  Items: string
+- **ignoreEnvVars** (arrayoptional): Environment variable names to ignore in the comparison.
+  Items: string
+
+### k8s_silent_killers
+
+Scheduled audit of slow-burning cluster issues: expiring TLS certs (Secrets, webhook caBundles, APIService caBundles), broken webhooks (failurePolicy=Fail with missing/empty backing service), stale APIServices, stuck finalizers, and orphaned bound PVCs. Returns prioritized findings with severity. Designed for periodic (cron) execution. Read-only and safe under all protection modes.
+
+**Parameters:**
+
+- **certExpiryDays** (numberoptional) (default: 30): Days threshold for cert expiry warnings. Defaults to 30.
+- **stuckThresholdHours** (numberoptional) (default: 24): Hours threshold for stuck finalizers and stale APIServices. Defaults to 24.
+- **orphanPvcDays** (numberoptional) (default: 30): Days threshold for orphan bound PVCs (no consumer pods). Defaults to 30.
+- **includePvcAudit** (booleanoptional) (default: true): Whether to scan PVCs (slow on clusters with thousands of PVCs). Defaults to true.
+- **includeFinalizerAudit** (booleanoptional) (default: true): Whether to scan namespaces and pods for stuck finalizers. Defaults to true.
+- **maxPerSection** (numberoptional) (default: 100): Maximum findings returned per check. Defaults to 100.
+
 ## Advanced Tools
 
 Advanced operations including batch processing and resource comparison
 
-**Total Tools:** 26
+**Total Tools:** 23
 
 ### k8s_cache_stats
 
@@ -2376,44 +2386,6 @@ Get resources using Go template syntax (like kubectl -o go-template). Supports G
 - **namespace** (stringoptional) (default: "default"): Namespace (for namespaced resources)
 - **template** (string, required): Go template string (e.g., {{range .items}}{{ .metadata.name }}{{end}})
 
-### k8s_patch
-
-Patch any Kubernetes resource (like kubectl patch). Supports strategic merge patch.
-
-**Parameters:**
-
-- **resource** (string, required): Resource type (pod, deployment, service, configmap, etc.)
-- **name** (string, required): Resource name
-- **namespace** (stringoptional) (default: "default"): Namespace (if namespaced resource)
-- **patch** (object, required): JSON patch object to apply
-- **patchType** (stringoptional) (default: "strategic") [enum: strategic, merge, json]: Patch type
-
-### k8s_label
-
-Add, update, or remove labels on any Kubernetes resource (like kubectl label)
-
-**Parameters:**
-
-- **resource** (string, required): Resource type (pod, deployment, service, node, etc.)
-- **name** (string, required): Resource name
-- **namespace** (stringoptional) (default: "default"): Namespace (if namespaced resource)
-- **labels** (object, required): Labels to add/update (use null value to remove a label)
-- **overwrite** (booleanoptional) (default: true): Overwrite existing labels
-- **all** (booleanoptional) (default: false): Apply to all resources of the type (requires selector)
-- **selector** (stringoptional): Label selector when using --all
-
-### k8s_annotate
-
-Add, update, or remove annotations on any Kubernetes resource (like kubectl annotate)
-
-**Parameters:**
-
-- **resource** (string, required): Resource type (pod, deployment, service, node, etc.)
-- **name** (string, required): Resource name
-- **namespace** (stringoptional) (default: "default"): Namespace (if namespaced resource)
-- **annotations** (object, required): Annotations to add/update (use null value to remove)
-- **overwrite** (booleanoptional) (default: true): Overwrite existing annotations
-
 ### k8s_list_crd
 
 List Custom Resource Definitions (CRDs) in the cluster
@@ -2470,9 +2442,9 @@ Start a proxy server to the Kubernetes API (like kubectl proxy)
 
 ## Server Management
 
-Internal MCP server status, metrics, and lifecycle management
+Internal MCP server status, metrics, lifecycle management, and protection mode controls
 
-**Total Tools:** 4
+**Total Tools:** 8
 
 ### k8s_server_info
 
@@ -2507,6 +2479,38 @@ Shut down the MCP server gracefully
 **Parameters:**
 
 - **confirm** (boolean, required) (default: false): Confirmation flag to prevent accidental shutdown
+
+### k8s_toggle_protection_mode
+
+Toggle infrastructure protection mode on/off. When enabled, blocks destructive operations like delete, drain, cordon, and rollback.
+
+**Parameters:**
+
+- **enabled** (boolean, required): Enable (true) or disable (false) infrastructure protection mode
+
+### k8s_toggle_strict_protection_mode
+
+Toggle strict protection mode on/off. When enabled, only read-only operations are allowed (list, get, describe, logs).
+
+**Parameters:**
+
+- **enabled** (boolean, required): Enable (true) or disable (false) strict protection mode
+
+### k8s_toggle_no_delete_mode
+
+Toggle no-delete protection mode on/off. When enabled, blocks all deletion operations while allowing other modifications.
+
+**Parameters:**
+
+- **enabled** (boolean, required): Enable (true) or disable (false) no-delete protection mode
+
+### k8s_toggle_all_protection_modes
+
+Toggle all protection modes on/off at once. Convenience tool to enable or disable infrastructure, strict, and no-delete protection simultaneously.
+
+**Parameters:**
+
+- **enabled** (boolean, required): Enable (true) or disable (false) all protection modes
 
 ## Helm Chart Management
 

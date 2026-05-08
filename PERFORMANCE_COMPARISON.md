@@ -13,7 +13,7 @@
 
 | Metric                                  | mcp-server-kubernetes-main | k8s-helm-mcp-main    | Winner                |
 | -----------------------------------------| ----------------------------| ------------------------| -----------------------|
-| **Tool Count**                          | ~25 tools                  | 267 tools            | k8s-helm-mcp        |
+| **Tool Count**                          | ~25 tools                  | 269 tools            | k8s-helm-mcp        |
 | **Cold Start**                          | Fast (Bun)                 | Fast (Bun/Node)        | Tie                   |
 | **Request Latency (Read/Write)**        | Higher (kubectl exec)      | Lower (direct API)     | k8s-helm-mcp        |
 | **Request Latency (Exec/Port-Forward)** | Executes directly          | Executes directly      | Tie                   |
@@ -65,7 +65,7 @@
 
 | Category | mcp-server-kubernetes | k8s-helm-mcp v0.28.0 |
 |----------|---------------------|------------------------|
-| **Tools** | 25 basic tools | 267 comprehensive tools |
+| **Tools** | 25 basic tools | 269 comprehensive tools |
 | **Helm** | 3 operations | 40+ operations (full CLI) |
 | **Error Handling** | Basic McpError | Classified errors with suggestions |
 | **Protection Modes** | None | 3 modes (Infrastructure, Strict, No Delete) |
@@ -834,7 +834,7 @@ spec:
 | **Simplicity** | ? Simple kubectl wrappers | ? Complex architecture |
 | **Performance (Read/Write)** | ? Process spawning overhead | ? Direct API calls |
 | **Performance (Exec/Port-Forward)** | ? Direct execution | ? Direct execution (mode=direct) + websocket mode |
-| **Tool Coverage** | ? 25 basic tools | ? 262+ comprehensive tools |
+| **Tool Coverage** | ? 25 basic tools | ? 269+ comprehensive tools |
 | **Error Handling** | ? Basic errors | ? Classified with suggestions |
 | **Validation** | ? Basic Zod | ? Kubernetes spec |
 | **Caching** | ? None | ? Response caching with statistics |
@@ -3079,7 +3079,7 @@ import { AppsV1Api } from "@kubernetes/client-node/gen/apps/v1";
 | Throughput | ? Low (10-20/s) | ? High (100-200/s) | k8s-helm-mcp |
 | Retry Logic | ? None | ? Exponential backoff | k8s-helm-mcp |
 | **Advanced Features** |
-| Tool Count | ? 25 tools | ? 262 tools | k8s-helm-mcp |
+| Tool Count | ? 25 tools | ? 269 tools | k8s-helm-mcp |
 | Helm Support | ? Basic | ? Complete | k8s-helm-mcp |
 | Protection Modes | ? Basic | ? 3-level | k8s-helm-mcp |
 | Error Classification | ? Basic | ? Advanced | k8s-helm-mcp |
@@ -3107,7 +3107,7 @@ import { AppsV1Api } from "@kubernetes/client-node/gen/apps/v1";
 1. **Direct API Access**: 5-15ms latency for read/write operations (vs 80-150ms)
 2. **High Throughput**: 100-200 req/s with connection pooling
 3. **Response Caching**: 1-3ms latency for repeated reads (95% reduction)
-4. **Comprehensive Coverage**: 262 tools vs 25
+4. **Comprehensive Coverage**: 269 tools vs 25
 5. **Advanced Safety**: 3-level protection modes + Enterprise Security Hardening
 6. **Full Observability**: Built-in OpenTelemetry + Audit Logging
 7. **Production Transport**: SSE and stdio support
