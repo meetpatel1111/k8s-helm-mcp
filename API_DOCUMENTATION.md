@@ -2,7 +2,7 @@
 
 This document provides auto-generated API documentation for all Kubernetes and Helm tools.
 
-**Generated:** 2026-05-07T08:07:06.772Z
+**Generated:** 2026-05-08T09:00:02.225Z
 
 ## Summary
 
