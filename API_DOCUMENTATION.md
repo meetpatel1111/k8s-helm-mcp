@@ -2,7 +2,7 @@
 
 This document provides auto-generated API documentation for all Kubernetes and Helm tools.
 
-**Generated:** 2026-09-08T20:25:39.387Z
+**Generated:** 2026-09-08T23:06:03.661Z
 
 ## Summary
 
@@ -320,6 +320,7 @@ Get a resource for editing and apply changes (like kubectl edit). Step 1: Call w
 - **name** (string, required): Resource name
 - **namespace** (stringoptional) (default: "default"): Namespace
 - **manifest** (stringoptional): Modified YAML/JSON manifest to apply (omit to fetch current state)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_diff
 
@@ -405,6 +406,7 @@ Replace a resource by filename or stdin (like kubectl replace). WARNING: This is
 - **force** (booleanoptional) (default: false): Force replace even if conflicts exist
 - **namespace** (stringoptional): Namespace (overrides manifest)
 - **cascade** (stringoptional) (default: "background"): Must be 'background', 'orphan', or 'foreground'
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_convert
 
@@ -437,6 +439,7 @@ Set the last-applied-configuration annotation on a resource (like kubectl apply 
 - **namespace** (stringoptional) (default: "default"): Namespace for namespaced resources
 - **manifest** (string, required): YAML/JSON manifest to set as last-applied-configuration
 - **createAnnotation** (booleanoptional) (default: true): Create the annotation if it doesn't exist
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_kustomize_build
 
@@ -853,6 +856,7 @@ Expose a deployment or pod as a service (like kubectl expose)
 - **targetPort** (numberoptional): Target port on pods (defaults to port)
 - **type** (stringoptional) (default: "ClusterIP") [enum: ClusterIP, NodePort, LoadBalancer]: Service type
 - **serviceName** (stringoptional): Name for the created service (defaults to resource name)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_ingress
 
@@ -1203,7 +1207,7 @@ Run a pod imperatively (like kubectl run). Creates and starts a single pod.
 - **port** (numberoptional): Container port to expose
 - **restartPolicy** (stringoptional) (default: "Always") [enum: Always, OnFailure, Never]: Restart policy
 - **serviceAccount** (stringoptional): ServiceAccount to use
-- **dryRun** (stringoptional) [enum: client, server]: Dry run mode (client or server)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 - **output** (stringoptional) (default: "yaml") [enum: json, yaml]: Output format for dry-run
 - **tty** (booleanoptional) (default: false): Allocate TTY for interactive use
 - **stdin** (booleanoptional) (default: false): Keep stdin open
@@ -1231,6 +1235,7 @@ Debug a node by creating a debug pod on it (like kubectl debug node). Creates a 
 - **namespace** (stringoptional) (default: "default"): Namespace for debug pod
 - **command** (arrayoptional) (default: ["sh"]): Command to run
   Items: string
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ## Security Tools
 
@@ -1622,6 +1627,7 @@ Approve a Certificate Signing Request (like kubectl certificate approve)
 
 - **name** (string, required): Name of the CSR to approve
 - **force** (booleanoptional) (default: false): Force approval even if already approved
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_certificate_deny
 
@@ -1631,6 +1637,7 @@ Deny a Certificate Signing Request (like kubectl certificate deny)
 
 - **name** (string, required): Name of the CSR to deny
 - **force** (booleanoptional) (default: false): Force denial even if already denied
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_auth_reconcile
 
@@ -1814,6 +1821,7 @@ Quick deploy using template with custom parameters
 - **resources** (objectoptional): Resource requests and limits
   - **memory** (stringoptional): 
   - **cpu** (stringoptional): 
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ## WebSocket Tools
 
@@ -2628,7 +2636,7 @@ Delete multiple pods matching criteria
 - **namespace** (string, required): Namespace (required)
 - **labelSelector** (stringoptional): Label selector to match pods
 - **status** (stringoptional): Filter by pod status (e.g., Failed, Evicted)
-- **dryRun** (booleanoptional) (default: false): Show what would be deleted without actually deleting
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Dry-run mode: 'client' previews matched pods without calling the API, 'server' validates deletion via the API without persisting
 
 ### k8s_find_orphaned_resources
 
@@ -2736,7 +2744,7 @@ Delete resources with selectors and options (like kubectl delete). Supports sing
 - **all** (booleanoptional) (default: false): Delete all resources of specified type(s) in namespace
 - **cascade** (stringoptional) (default: "background") [enum: background, orphan, foreground]: Cascade deletion policy
 - **manifest** (stringoptional): YAML/JSON manifest content to identify resources to delete (like kubectl delete -f)
-- **dryRun** (booleanoptional) (default: false): Dry run mode - show what would be deleted
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Dry-run mode: 'client' previews without calling the API, 'server' validates via the API without persisting
 - **wait** (booleanoptional) (default: false): Wait for resource deletion to complete
 
 ### k8s_get_go_template

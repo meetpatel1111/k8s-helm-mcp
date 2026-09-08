@@ -169,6 +169,26 @@ export NO_DELETE_PROTECTION_MODE=false # Disable
 
 Controls all three protection modes simultaneously for quick switching between full access and fully protected states. This aligns with **OWASP K04: Lack of Cluster Level Policy Enforcement**, providing a local enforcement layer.
 
+### Toolset Selection (Attack-Surface Reduction)
+
+Where Protection Modes block a tool **at call time**, toolset selection removes it **at registration time** — the tool is never advertised to the model, so it cannot be invoked or prompt-injected into use. This is the outermost of the layered controls and is the recommended first step for least-privilege AI deployments.
+
+Configure via environment variables (see the README [Toolsets](README.md#toolsets-tool-selection) section for the full list):
+
+| Variable | Effect |
+|----------|--------|
+| `K8S_TOOLSETS=readonly` | Registers only read/list/get/inspect tools — the model never sees any mutating or deletion tool |
+| `K8S_TOOLSETS=nodelete` | Registers reads and updates but no delete/destroy tools |
+| `K8S_TOOLSETS=kubernetes` / `helm` / `core` / `lean` | Registers a focused subset for the agent's job |
+| `K8S_DISABLED_TOOLSETS=...` | Removes specific categories after selection |
+
+```bash
+# Least-privilege observability agent: read-only surface, enforced at registration
+K8S_TOOLSETS=readonly npm start
+```
+
+**Defense in depth.** Toolset selection and Protection Modes are application-layer guardrails, not the security boundary. The authoritative control is **Kubernetes RBAC on the kubeconfig's ServiceAccount**. For a read-only agent, bind its kubeconfig to a read-only `ClusterRole` **and** set `K8S_TOOLSETS=readonly`: RBAC enforces authorization at the API server, while the toolset reduces attack surface and model context. This maps to **OWASP K01 (RBAC)** layered with **K04 (local policy enforcement)**.
+
 ### Native Pre-Flight Simulation & Dry-Run Engine (SlowMist AI Safety)
 
 **Purpose:** Provide zero-risk pre-flight verification for AI agents and automation scripts prior to committing mutations to production Kubernetes clusters.

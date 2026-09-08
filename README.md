@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="300" alt="k8s-helm-mcp v0.29.0 logo">
+  <img src="assets/logo.png" width="300" alt="k8s-helm-mcp v0.30.0 logo">
 </p>
 
 # k8s-helm-mcp
@@ -23,7 +23,7 @@
 [![Works with Codex](https://img.shields.io/badge/Works_with-Codex-black?logo=openai)](https://openai.com/)
 [![Works with Codex CLI](https://img.shields.io/badge/Works_with-Codex_CLI-black?logo=openai)](https://openai.com/)
 
-Production-grade Kubernetes MCP (Model Context Protocol) Server v0.29.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Native Pre-Flight Simulation & Dry-Run Engine (`dryRun: none | client | server`), Universal Query Helper & Pagination (`limit`, `continue`, `sortBy`, `outputFormat`), Universal Deletion Safety (`propagationPolicy`, `gracePeriodSeconds`, `ignoreNotFound`), Kubernetes v1.37 Alignment, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
+Production-grade Kubernetes MCP (Model Context Protocol) Server v0.30.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Native Pre-Flight Simulation & Dry-Run Engine (`dryRun: none | client | server`), Universal Query Helper & Pagination (`limit`, `continue`, `sortBy`, `outputFormat`), Universal Deletion Safety (`propagationPolicy`, `gracePeriodSeconds`, `ignoreNotFound`), Kubernetes v1.37 Alignment, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
 
 > [!TIP]
 > **Status:** This package works brilliantly with **Claude Desktop**, **Claude Code**, **Gemini CLI**, **Codex**, **Codex CLI**, **Windsurf**, **Antigravity**, **Cursor**, and **GitHub Copilot**! For most clients, you can add it using `npx -y k8s-helm-mcp`.
@@ -358,6 +358,38 @@ npm start
 }
 ```
 
+> Each block above is a **complete, working config**. Only `command` and `args` are required — no environment variables are needed to start.
+
+##### Optional: environment variables
+
+The server needs **no** environment variables to run — it auto-discovers your kubeconfig from `~/.kube/config` (`%USERPROFILE%\.kube\config` on Windows). Add an `env` block only when you want to override a default. This annotated example is a normal config (all values shown are optional):
+
+```json
+{
+  "mcpServers": {
+    "k8s-helm-mcp": {
+      "command": "npx",
+      "args": ["-y", "k8s-helm-mcp"],
+      "env": {
+        "KUBECONFIG": "C:\\path\\to\\your\\.kube\\config",
+        "K8S_TOOLSETS": "readonly"
+      }
+    }
+  }
+}
+```
+
+| `env` variable | Required? | Purpose |
+|----------------|-----------|---------|
+| `KUBECONFIG` | Optional | Path to kubeconfig, if not at the default location |
+| `K8S_TOOLSETS` | Optional | Limit which tools are exposed — `readonly`, `kubernetes`, `helm`, `core`, `lean`, … (default: `all`). See [Toolsets](#toolsets-tool-selection) |
+| `K8S_DISABLED_TOOLSETS` | Optional | Remove specific categories after selection |
+| `INFRA_PROTECTION_MODE` / `STRICT_PROTECTION_MODE` / `NO_DELETE_PROTECTION_MODE` | Optional | Runtime safety guards (all default **on**) |
+| `K8S_MAX_SOCKETS` / `K8S_KEEPALIVE_MS` | Optional | Tune the API-server connection pool (defaults `50` / `30000`) |
+| `MCP_AUTH_TOKEN` | Optional | Bearer token for the SSE/HTTP transport (auto-generated if unset) |
+
+> **Every variable above is optional**, so a minimal `command` + `args` config is fully functional. Enterprises typically add just `K8S_TOOLSETS` (e.g. `readonly`) to ship a least-privilege surface. The same `env` block works in every client below (Cursor, Windsurf, VS Code, etc.) — only the surrounding `command`/`args` change.
+
 4. **Save and Restart Claude Desktop**
 5. **Test it**: Ask Claude "List my Kubernetes pods"
 
@@ -431,6 +463,9 @@ Add this to your `mcp.json`:
   }
 }
 ```
+
+> [!NOTE]
+> The `env` block is **optional** — omit it entirely to auto-detect `~/.kube/config`. You can also add `K8S_TOOLSETS`, protection modes, etc. here; see [Optional: environment variables](#optional-environment-variables).
 
 > [!TIP]
 > **UI Access:** Go to **Cursor Settings** (Ctrl + ,) > **Features** > **MCP** (or **Tools & MCP** in some versions) and click **Add New MCP Server**.
@@ -521,6 +556,9 @@ Add this to your `mcp_config.json`:
   }
 }
 ```
+
+> [!NOTE]
+> `KUBECONFIG` is **optional** (auto-detected if omitted). Add other optional vars like `K8S_TOOLSETS=readonly` in the same `env` block — see [Optional: environment variables](#optional-environment-variables).
 
 > [!TIP]
 > **Refresh Needed:** After saving the file, click the **Refresh** button (circular arrow) in the Windsurf MCP panel to see the new tools.
@@ -777,6 +815,8 @@ For a complete list of all 269 tools and their kubectl equivalents, see **[TOOLS
 | **Server** | 8 | Server info, health, metrics, stop, protection mode toggles |
 
 **Total: 269 tools** (some tools are registered in multiple categories; unique count is 269)
+
+> These category names double as `K8S_TOOLSETS` selectors — e.g. `K8S_TOOLSETS=helm,monitoring` exposes only those two categories. See [Toolsets (Tool Selection)](#toolsets-tool-selection) to register a focused or read-only subset.
 
 ### Infrastructure Protection & Native Pre-Flight Simulation
 

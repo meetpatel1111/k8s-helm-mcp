@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.30.0] - 2026-09-09
+
+### Added
+- **Toolset Selection (`K8S_TOOLSETS`)**: Choose which tools the server registers at startup — reduce model context, stay under client tool-count limits, or ship a least-privilege surface. Two-stage model: additive presets/categories pick groups, then filter flags trim.
+  - Presets: `all`/`full` (default), `kubernetes`/`k8s` (all categories except Helm), `helm` (Helm only), `core`, `diagnostics`. `kubernetes` and `helm` are disjoint complements whose union equals `all`.
+  - Filter flags: `readonly` (reads only), `nodelete` (reads + updates, no deletions), `lean` (`k8s_kubectl` + a few core reads). Flags compose with any selection, e.g. `kubernetes,nodelete`.
+  - `K8S_DISABLED_TOOLSETS` removes whole categories after selection. The 8 server-management tools are always registered.
+  - Selection is registration-time only and never changes tool behavior; default (`all`) is identical to previous versions. Applies to both stdio and SSE transports.
+- **Connection pool tuning**: `K8S_MAX_SOCKETS` (default 50) and `K8S_KEEPALIVE_MS` (default 30000) tune the API-server HTTP pool under the new undici backend.
+
+### Changed
+- **Dependencies updated**, including `@kubernetes/client-node` 2.x (undici HTTP backend) and OpenTelemetry 2.x. Connection pooling was reimplemented on undici's global dispatcher to keep the pool bounded and warm across the upgrade.
+
+### Fixed
+- SSE transport now registers the 5 SRE tools, which were previously omitted on that transport only.
+
+### Breaking
+- **Requires Node.js 22+** (`engines.node >= 22.0.0`). `@kubernetes/client-node` 2.x drops Node 18/20 support; users on older Node must upgrade the runtime.
+
 ## [0.29.0] - 2026-09-08
 
 ### Added

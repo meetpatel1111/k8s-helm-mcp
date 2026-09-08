@@ -1,8 +1,10 @@
 # K8s MCP Server - Complete Tool Reference
 
-**Version: 0.29.0** | **Total Tools: 269**
+**Version: 0.30.0** | **Total Tools: 269**
 
 This document provides comprehensive reference for all tools in the Kubernetes MCP Server, including tool catalogs, kubectl mappings, and natural language patterns. This server is optimized for use with **Claude Desktop**, **Claude Code**, **Codex**, **Windsurf**, **Antigravity**, and **Cursor**.
+
+> **Exposing a subset:** All 269 tools are registered by default. Set `K8S_TOOLSETS` to register only a focused or read-only subset (e.g. `readonly`, `kubernetes`, `helm`, `core`, `lean`) — see [Toolsets (Tool Selection)](README.md#toolsets-tool-selection) in the README.
 
 ---
 
@@ -967,7 +969,7 @@ All tools starting with `k8s_delete_`, `k8s_bulk_delete_`, `k8s_helm_uninstall`,
 
 ---
 
-*Generated for k8s-helm-mcp v0.29.0*
+*Generated for k8s-helm-mcp v0.30.0*
 
 ---
 
