@@ -1,4 +1,4 @@
-﻿# Security and Data Protection Guide
+# Security and Data Protection Guide
 
 This document explains the security architecture, data protection mechanisms, and safety features of the k8s-helm-mcp.
 
@@ -168,6 +168,38 @@ export NO_DELETE_PROTECTION_MODE=false # Disable
 **Tool:** `k8s_toggle_all_protection_modes`
 
 Controls all three protection modes simultaneously for quick switching between full access and fully protected states. This aligns with **OWASP K04: Lack of Cluster Level Policy Enforcement**, providing a local enforcement layer.
+
+### Native Pre-Flight Simulation & Dry-Run Engine (SlowMist AI Safety)
+
+**Purpose:** Provide zero-risk pre-flight verification for AI agents and automation scripts prior to committing mutations to production Kubernetes clusters.
+
+In autonomous multi-agent environments, agents may propose cluster mutations, scaling, deletions, or configuration changes. To guarantee that dangerous actions are never executed blindly, k8s-helm-mcp introduces native dry-run execution across all creation, deletion, and operational mutation tools:
+
+| Mode | Execution Path | Safety & Security Guarantees |
+|------|----------------|------------------------------|
+| `none` (default) | Standard Kubernetes API / CLI mutation | Direct cluster state modification with full audit logging |
+| `client` | Local schema & parameter simulation | Executes local input validation, safety checks, and parameter sanitization without contacting the cluster |
+| `server` | Kubernetes API Server Dry-Run (`dryRun=All`) | Passes the mutation request to the Kubernetes API server admission chain (ValidatingAdmissionWebhooks, MutatingAdmissionWebhooks, RBAC authorization, schema validation, quota checks) **without persisting state** to etcd |
+
+**Security Benefits:**
+- **Pre-Execution RBAC Validation**: Verifies that the current kubeconfig context has sufficient RBAC permissions to perform the action before attempting it live.
+- **Webhook Admission Verification**: Catches violations of OPA Gatekeeper, Kyverno, or custom admission webhooks before any actual mutation occurs.
+- **Quota & Limit Enforcement Pre-checks**: Tests whether a pod, deployment, or PVC would exceed namespace resource quotas.
+
+**Universal Scope:**
+- **22 Creation Tools**: `k8s_create_*` (deployments, services, namespaces, ingress, PVCs, roles, secrets, configmaps, etc.)
+- **20+ Deletion Tools**: `k8s_delete_*` (pods, deployments, statefulsets, services, pvcs, secrets, namespaces, generic delete)
+- **Operational Mutations**: Node cordoning, uncordoning, draining, taints, labels; pod restarts; workload scaling, rollouts, image updates, pause/resume, autoscaling; generic patch, label, and annotate.
+
+### Deletion Safety & Cascade Controls
+
+**Purpose:** Prevent accidental cascading cluster outages and catastrophic data loss caused by AI hallucinations or aggressive cleanup scripts.
+
+Every deletion tool in the MCP server is equipped with universal deletion safety parameters:
+- **`dryRun`** (`'none' | 'client' | 'server'`): Pre-flight simulation before deleting critical pods, storage, or workloads.
+- **`gracePeriodSeconds`**: Allows controlled shutdown countdowns, preventing abrupt termination of stateful or database workloads.
+- **`propagationPolicy`** (`'Orphan' | 'Background' | 'Foreground'`): Explicit control over Kubernetes garbage collection, preventing accidental recursive deletion of child resources (e.g. pods, replicasets, persistent volumes).
+- **`ignoreNotFound`** (`boolean`): Idempotent deletion handling that safely succeeds with a descriptive notice if the target resource does not exist, preventing script crashes and error cascades.
 
 ## Data Protection
 

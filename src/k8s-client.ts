@@ -126,6 +126,19 @@ function checkKubectlInstalled(): void {
   }
 }
 
+export interface ListOptions {
+  limit?: number;
+  labelSelector?: string;
+  fieldSelector?: string;
+}
+
+function parseListOptions(limitOrOptions?: number | ListOptions): ListOptions {
+  if (typeof limitOrOptions === "number") {
+    return { limit: limitOrOptions };
+  }
+  return limitOrOptions || {};
+}
+
 export class K8sClient {
   private _kc: k8s.KubeConfig;
   private coreV1Api: k8s.CoreV1Api;
@@ -515,10 +528,15 @@ export class K8sClient {
     return this.autoscalingV2Api;
   }
 
-  async listNodes(): Promise<k8s.V1Node[]> {
+  async listNodes(limitOrOptions?: number | ListOptions): Promise<k8s.V1Node[]> {
+    const opts = parseListOptions(limitOrOptions);
     return this.retryWithBackoff(
       async () => {
-        const response = await this.coreV1Api.listNode();
+        const response = await this.coreV1Api.listNode({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
         return response.items || [];
       },
       "List nodes"
@@ -546,11 +564,12 @@ export class K8sClient {
     );
   }
 
-  async patchNode(name: string, patch: any): Promise<k8s.V1Node> {
+  async patchNode(name: string, patch: any, options: { dryRun?: string } = {}): Promise<k8s.V1Node> {
     return safeExecute(async () => {
       const response = await this.coreV1Api.patchNode({
         name,
         body: patch,
+        dryRun: options.dryRun,
       }, {
         middleware: [{
           pre: (context: k8s.RequestContext) => {
@@ -572,10 +591,20 @@ export class K8sClient {
    * @param limit - Maximum number of pods to return (pagination)
    * @returns Array of pods
    */
-  async listPods(namespace?: string, limit?: number): Promise<k8s.V1Pod[]> {
+  async listPods(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Pod[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace 
-      ? await this.coreV1Api.listNamespacedPod({ namespace, limit })
-      : await this.coreV1Api.listPodForAllNamespaces({ limit });
+      ? await this.coreV1Api.listNamespacedPod({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.coreV1Api.listPodForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -595,8 +624,18 @@ export class K8sClient {
    * @param name - Pod name
    * @param namespace - Pod namespace
    */
-  async deletePod(name: string, namespace: string): Promise<void> {
-    await this.coreV1Api.deleteNamespacedPod({ name, namespace });
+  async deletePod(
+    name: string,
+    namespace: string,
+    options: { dryRun?: string; gracePeriodSeconds?: number; propagationPolicy?: string } = {}
+  ): Promise<void> {
+    await this.coreV1Api.deleteNamespacedPod({
+      name,
+      namespace,
+      dryRun: options.dryRun,
+      gracePeriodSeconds: options.gracePeriodSeconds,
+      propagationPolicy: options.propagationPolicy,
+    });
   }
 
   /**
@@ -713,8 +752,13 @@ export class K8sClient {
    * List all namespaces in the cluster
    * @returns Array of namespaces
    */
-  async listNamespaces(): Promise<k8s.V1Namespace[]> {
-    const response = await this.coreV1Api.listNamespace();
+  async listNamespaces(limitOrOptions?: number | ListOptions): Promise<k8s.V1Namespace[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = await this.coreV1Api.listNamespace({
+      limit: opts.limit,
+      labelSelector: opts.labelSelector,
+      fieldSelector: opts.fieldSelector,
+    });
     return response.items || [];
   }
 
@@ -723,13 +767,23 @@ export class K8sClient {
   /**
    * List deployments in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
-   * @param limit - Maximum number of deployments to return
+   * @param limitOrOptions - Maximum number of deployments to return or ListOptions
    * @returns Array of deployments
    */
-  async listDeployments(namespace?: string, limit?: number): Promise<k8s.V1Deployment[]> {
+  async listDeployments(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Deployment[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.appsV1Api.listNamespacedDeployment({ namespace, limit })
-      : await this.appsV1Api.listDeploymentForAllNamespaces({ limit });
+      ? await this.appsV1Api.listNamespacedDeployment({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.appsV1Api.listDeploymentForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -751,13 +805,14 @@ export class K8sClient {
    * @param replicas - Number of replicas
    * @returns Updated deployment
    */
-  async scaleDeployment(name: string, namespace: string, replicas: number): Promise<k8s.V1Deployment> {
+  async scaleDeployment(name: string, namespace: string, replicas: number, options: { dryRun?: string } = {}): Promise<k8s.V1Deployment> {
     const patch = { spec: { replicas } };
     return safeExecute(async () => {
       const response = await this.appsV1Api.patchNamespacedDeployment({
         name,
         namespace,
         body: patch,
+        dryRun: options.dryRun,
       }, {
         middleware: [{
           pre: (context: k8s.RequestContext) => {
@@ -777,7 +832,7 @@ export class K8sClient {
    * @param namespace - Deployment namespace
    * @returns Updated deployment
    */
-  async restartDeployment(name: string, namespace: string): Promise<k8s.V1Deployment> {
+  async restartDeployment(name: string, namespace: string, options: { dryRun?: string } = {}): Promise<k8s.V1Deployment> {
     const now = new Date().toISOString();
     const patch = {
       spec: {
@@ -795,6 +850,7 @@ export class K8sClient {
         name,
         namespace,
         body: patch,
+        dryRun: options.dryRun,
       }, {
         middleware: [{
           pre: (context: k8s.RequestContext) => {
@@ -816,10 +872,20 @@ export class K8sClient {
    * @param limit - Maximum number of services to return
    * @returns Array of services
    */
-  async listServices(namespace?: string, limit?: number): Promise<k8s.V1Service[]> {
+  async listServices(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Service[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.coreV1Api.listNamespacedService({ namespace, limit })
-      : await this.coreV1Api.listServiceForAllNamespaces({ limit });
+      ? await this.coreV1Api.listNamespacedService({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.coreV1Api.listServiceForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -832,10 +898,37 @@ export class K8sClient {
    * @param limit - Maximum number of events to return
    * @returns Array of events
    */
-  async listEvents(namespace?: string, fieldSelector?: string, limit?: number): Promise<k8s.CoreV1Event[]> {
+  async listEvents(
+    namespace?: string,
+    fieldSelectorOrOptions?: string | ListOptions,
+    limit?: number
+  ): Promise<k8s.CoreV1Event[]> {
+    let fieldSelector: string | undefined;
+    let labelSelector: string | undefined;
+    let actualLimit = limit;
+
+    if (typeof fieldSelectorOrOptions === "object" && fieldSelectorOrOptions !== null) {
+      fieldSelector = fieldSelectorOrOptions.fieldSelector;
+      labelSelector = fieldSelectorOrOptions.labelSelector;
+      if (fieldSelectorOrOptions.limit !== undefined) {
+        actualLimit = fieldSelectorOrOptions.limit;
+      }
+    } else {
+      fieldSelector = fieldSelectorOrOptions;
+    }
+
     const response = namespace
-      ? await this.coreV1Api.listNamespacedEvent({ namespace, fieldSelector, limit })
-      : await this.coreV1Api.listEventForAllNamespaces({ fieldSelector, limit });
+      ? await this.coreV1Api.listNamespacedEvent({
+          namespace,
+          fieldSelector,
+          labelSelector,
+          limit: actualLimit,
+        })
+      : await this.coreV1Api.listEventForAllNamespaces({
+          fieldSelector,
+          labelSelector,
+          limit: actualLimit,
+        });
     return response.items || [];
   }
 
@@ -844,13 +937,23 @@ export class K8sClient {
   /**
    * List jobs in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
-   * @param limit - Maximum number of jobs to return
+   * @param limitOrOptions - Maximum number of jobs to return or ListOptions
    * @returns Array of jobs
    */
-  async listJobs(namespace?: string, limit?: number): Promise<k8s.V1Job[]> {
+  async listJobs(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Job[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.batchV1Api.listNamespacedJob({ namespace, limit })
-      : await this.batchV1Api.listJobForAllNamespaces({ limit });
+      ? await this.batchV1Api.listNamespacedJob({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.batchV1Api.listJobForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -859,13 +962,23 @@ export class K8sClient {
   /**
    * List cronjobs in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
-   * @param limit - Maximum number of cronjobs to return
+   * @param limitOrOptions - Maximum number of cronjobs to return or ListOptions
    * @returns Array of cronjobs
    */
-  async listCronJobs(namespace?: string, limit?: number): Promise<k8s.V1CronJob[]> {
+  async listCronJobs(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1CronJob[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.batchV1Api.listNamespacedCronJob({ namespace, limit })
-      : await this.batchV1Api.listCronJobForAllNamespaces({ limit });
+      ? await this.batchV1Api.listNamespacedCronJob({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.batchV1Api.listCronJobForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -874,12 +987,23 @@ export class K8sClient {
   /**
    * List ingresses in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
+   * @param limitOrOptions - Maximum number of ingresses to return or ListOptions
    * @returns Array of ingresses
    */
-  async listIngresses(namespace?: string): Promise<k8s.V1Ingress[]> {
+  async listIngresses(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Ingress[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.networkingV1Api.listNamespacedIngress({ namespace })
-      : await this.networkingV1Api.listIngressForAllNamespaces({});
+      ? await this.networkingV1Api.listNamespacedIngress({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.networkingV1Api.listIngressForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -888,12 +1012,23 @@ export class K8sClient {
   /**
    * List persistent volume claims in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
+   * @param limitOrOptions - Maximum number of PVCs to return or ListOptions
    * @returns Array of PVCs
    */
-  async listPVCs(namespace?: string): Promise<k8s.V1PersistentVolumeClaim[]> {
+  async listPVCs(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1PersistentVolumeClaim[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.coreV1Api.listNamespacedPersistentVolumeClaim({ namespace })
-      : await this.coreV1Api.listPersistentVolumeClaimForAllNamespaces({});
+      ? await this.coreV1Api.listNamespacedPersistentVolumeClaim({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.coreV1Api.listPersistentVolumeClaimForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -901,10 +1036,16 @@ export class K8sClient {
 
   /**
    * List all persistent volumes
+   * @param limitOrOptions - Maximum number of PVs to return or ListOptions
    * @returns Array of PVs
    */
-  async listPVs(): Promise<k8s.V1PersistentVolume[]> {
-    const response = await this.coreV1Api.listPersistentVolume({});
+  async listPVs(limitOrOptions?: number | ListOptions): Promise<k8s.V1PersistentVolume[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = await this.coreV1Api.listPersistentVolume({
+      limit: opts.limit,
+      labelSelector: opts.labelSelector,
+      fieldSelector: opts.fieldSelector,
+    });
     return response.items || [];
   }
 
@@ -912,10 +1053,16 @@ export class K8sClient {
 
   /**
    * List all storage classes
+   * @param limitOrOptions - Maximum number of storage classes to return or ListOptions
    * @returns Array of storage classes
    */
-  async listStorageClasses(): Promise<k8s.V1StorageClass[]> {
-    const response = await this.storageV1Api.listStorageClass({});
+  async listStorageClasses(limitOrOptions?: number | ListOptions): Promise<k8s.V1StorageClass[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = await this.storageV1Api.listStorageClass({
+      limit: opts.limit,
+      labelSelector: opts.labelSelector,
+      fieldSelector: opts.fieldSelector,
+    });
     return response.items || [];
   }
 
@@ -924,12 +1071,23 @@ export class K8sClient {
   /**
    * List configmaps in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
+   * @param limitOrOptions - Maximum number of config maps to return or ListOptions
    * @returns Array of configmaps
    */
-  async listConfigMaps(namespace?: string): Promise<k8s.V1ConfigMap[]> {
+  async listConfigMaps(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1ConfigMap[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.coreV1Api.listNamespacedConfigMap({ namespace })
-      : await this.coreV1Api.listConfigMapForAllNamespaces({});
+      ? await this.coreV1Api.listNamespacedConfigMap({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.coreV1Api.listConfigMapForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -938,12 +1096,23 @@ export class K8sClient {
   /**
    * List secrets in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
+   * @param limitOrOptions - Maximum number of secrets to return or ListOptions
    * @returns Array of secrets
    */
-  async listSecrets(namespace?: string): Promise<k8s.V1Secret[]> {
+  async listSecrets(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Secret[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.coreV1Api.listNamespacedSecret({ namespace })
-      : await this.coreV1Api.listSecretForAllNamespaces({});
+      ? await this.coreV1Api.listNamespacedSecret({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.coreV1Api.listSecretForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -952,12 +1121,23 @@ export class K8sClient {
   /**
    * List service accounts in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
+   * @param limitOrOptions - Maximum number of service accounts to return or ListOptions
    * @returns Array of service accounts
    */
-  async listServiceAccounts(namespace?: string): Promise<k8s.V1ServiceAccount[]> {
+  async listServiceAccounts(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1ServiceAccount[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.coreV1Api.listNamespacedServiceAccount({ namespace })
-      : await this.coreV1Api.listServiceAccountForAllNamespaces({});
+      ? await this.coreV1Api.listNamespacedServiceAccount({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.coreV1Api.listServiceAccountForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -966,12 +1146,23 @@ export class K8sClient {
   /**
    * List roles in a namespace or across all namespaces
    * @param namespace - Optional namespace filter
+   * @param limitOrOptions - Maximum number of roles to return or ListOptions
    * @returns Array of roles
    */
-  async listRoles(namespace?: string): Promise<k8s.V1Role[]> {
+  async listRoles(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1Role[]> {
+    const opts = parseListOptions(limitOrOptions);
     const response = namespace
-      ? await this.rbacV1Api.listNamespacedRole({ namespace })
-      : await this.rbacV1Api.listRoleForAllNamespaces({});
+      ? await this.rbacV1Api.listNamespacedRole({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.rbacV1Api.listRoleForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
     return response.items || [];
   }
 
@@ -979,10 +1170,119 @@ export class K8sClient {
 
   /**
    * List all cluster roles
+   * @param limitOrOptions - Maximum number of cluster roles to return or ListOptions
    * @returns Array of cluster roles
    */
-  async listClusterRoles(): Promise<k8s.V1ClusterRole[]> {
-    const response = await this.rbacV1Api.listClusterRole({});
+  async listClusterRoles(limitOrOptions?: number | ListOptions): Promise<k8s.V1ClusterRole[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = await this.rbacV1Api.listClusterRole({
+      limit: opts.limit,
+      labelSelector: opts.labelSelector,
+      fieldSelector: opts.fieldSelector,
+    });
+    return response.items || [];
+  }
+
+  // StatefulSets
+
+  /**
+   * List statefulsets in a namespace or across all namespaces
+   */
+  async listStatefulSets(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1StatefulSet[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = namespace
+      ? await this.appsV1Api.listNamespacedStatefulSet({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.appsV1Api.listStatefulSetForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
+    return response.items || [];
+  }
+
+  // DaemonSets
+
+  /**
+   * List daemonsets in a namespace or across all namespaces
+   */
+  async listDaemonSets(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1DaemonSet[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = namespace
+      ? await this.appsV1Api.listNamespacedDaemonSet({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.appsV1Api.listDaemonSetForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
+    return response.items || [];
+  }
+
+  // ReplicaSets
+
+  /**
+   * List replicasets in a namespace or across all namespaces
+   */
+  async listReplicaSets(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1ReplicaSet[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = namespace
+      ? await this.appsV1Api.listNamespacedReplicaSet({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.appsV1Api.listReplicaSetForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
+    return response.items || [];
+  }
+
+  // RoleBindings
+
+  /**
+   * List rolebindings in a namespace or across all namespaces
+   */
+  async listRoleBindings(namespace?: string, limitOrOptions?: number | ListOptions): Promise<k8s.V1RoleBinding[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = namespace
+      ? await this.rbacV1Api.listNamespacedRoleBinding({
+          namespace,
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        })
+      : await this.rbacV1Api.listRoleBindingForAllNamespaces({
+          limit: opts.limit,
+          labelSelector: opts.labelSelector,
+          fieldSelector: opts.fieldSelector,
+        });
+    return response.items || [];
+  }
+
+  // ClusterRoleBindings
+
+  /**
+   * List all cluster role bindings
+   */
+  async listClusterRoleBindings(limitOrOptions?: number | ListOptions): Promise<k8s.V1ClusterRoleBinding[]> {
+    const opts = parseListOptions(limitOrOptions);
+    const response = await this.rbacV1Api.listClusterRoleBinding({
+      limit: opts.limit,
+      labelSelector: opts.labelSelector,
+      fieldSelector: opts.fieldSelector,
+    });
     return response.items || [];
   }
 
@@ -1022,7 +1322,10 @@ export class K8sClient {
   };
 
   // Apply YAML with enhanced error handling - supports ALL resource types
-  async applyManifest(manifest: string): Promise<any> {
+  async applyManifest(
+    manifest: string,
+    options: { dryRun?: string; fieldManager?: string; forceConflicts?: boolean; serverSide?: boolean } = {}
+  ): Promise<any> {
     const validation = validateYamlManifest(manifest);
     if (!validation.valid) {
       throw new K8sMcpError(
@@ -1049,11 +1352,30 @@ export class K8sClient {
       const { kind, metadata } = doc;
       const namespace = metadata?.namespace || "default";
 
+      if (options.dryRun === "client") {
+        results.push({
+          kind,
+          name: metadata?.name,
+          namespace,
+          status: "validated",
+          dryRun: "client",
+          message: `[Client Dry-Run] ${kind} '${metadata?.name}' in namespace '${namespace}' validated successfully.`,
+        });
+        continue;
+      }
+
       const context: ErrorContext = {
         operation: "applyManifest",
         resource: metadata?.name,
         namespace
       };
+
+      const queryParams: string[] = [];
+      if (options.dryRun === "server") queryParams.push("dryRun=All");
+      if (options.fieldManager) queryParams.push(`fieldManager=${encodeURIComponent(options.fieldManager)}`);
+      if (options.forceConflicts) queryParams.push("force=true");
+      const qs = queryParams.length > 0 ? `?${queryParams.join("&")}` : "";
+      const method = options.serverSide ? "PATCH" : "POST";
 
       try {
         const mapping = K8sClient.RESOURCE_API_MAP[kind];
@@ -1063,11 +1385,11 @@ export class K8sClient {
             ? `/apis/${mapping.group}/${mapping.version}`
             : `/api/${mapping.version}`;
           const path = mapping.namespaced
-            ? `${basePath}/namespaces/${namespace}/${mapping.resource}`
-            : `${basePath}/${mapping.resource}`;
+            ? `${basePath}/namespaces/${namespace}/${mapping.resource}${qs}`
+            : `${basePath}/${mapping.resource}${qs}`;
 
-          const result = await this.rawApiRequest(path, { method: "POST", body: doc });
-          results.push({ kind, name: metadata.name, status: "created", result });
+          const result = await this.rawApiRequest(path, { method, body: doc });
+          results.push({ kind, name: metadata.name, status: "created", dryRun: options.dryRun || "none", result });
         } else {
           // Attempt to derive API path from apiVersion for unknown types
           const apiVersion = doc.apiVersion as string;
@@ -1076,12 +1398,12 @@ export class K8sClient {
             ? `/apis/${apiVersion}`
             : `/api/${apiVersion}`;
           const path = metadata?.namespace
-            ? `${basePath}/namespaces/${namespace}/${resourcePlural}`
-            : `${basePath}/${resourcePlural}`;
+            ? `${basePath}/namespaces/${namespace}/${resourcePlural}${qs}`
+            : `${basePath}/${resourcePlural}${qs}`;
 
           try {
-            const result = await this.rawApiRequest(path, { method: "POST", body: doc });
-            results.push({ kind, name: metadata.name, status: "created", result });
+            const result = await this.rawApiRequest(path, { method, body: doc });
+            results.push({ kind, name: metadata.name, status: "created", dryRun: options.dryRun || "none", result });
           } catch {
             results.push({
               kind,

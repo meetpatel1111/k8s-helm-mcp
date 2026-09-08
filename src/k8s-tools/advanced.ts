@@ -7,6 +7,13 @@ import { validateResourceName, validateNamespace } from "../validators.js";
 import { CacheManager } from "../cache-manager.js";
 import { execFileSync } from "child_process";
 import { scrubSensitiveData } from "../utils/secret-scrubber.js";
+import { commonListQuerySchema, commonGetQuerySchema, applySortAndLimit, applyGetFormatting, isNotFoundError } from "../utils/query-helper.js";
+import {
+  commonMutationQuerySchema,
+  isClientDryRun,
+  isServerDryRun,
+  formatClientDryRunMutation,
+} from "../utils/safety-helper.js";
 
 export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: CacheManager): { tool: Tool; handler: Function }[] {
   return [
@@ -547,9 +554,10 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               description: "Filter by pod status (e.g., Failed, Evicted)",
             },
             dryRun: {
-              type: "boolean",
-              description: "Show what would be deleted without actually deleting",
-              default: false,
+              type: "string",
+              enum: ["none", "client", "server"],
+              description: "Dry-run mode: 'client' previews matched pods without calling the API, 'server' validates deletion via the API without persisting",
+              default: "none",
             },
           },
           required: ["namespace"],
@@ -559,10 +567,11 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
         namespace: string;
         labelSelector?: string;
         status?: string;
-        dryRun?: boolean;
+        dryRun?: string;
       }) => {
         try {
           validateNamespace(namespace);
+          const serverDryRun = isServerDryRun(dryRun);
           const coreApi = k8sClient.getCoreV1Api();
           const response = await coreApi.listNamespacedPod({
             namespace,
@@ -580,15 +589,15 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
             };
           }
 
-          if (dryRun) {
+          if (isClientDryRun(dryRun)) {
             return {
-              dryRun: true,
+              dryRun: "client",
               matched: pods.length,
               wouldDelete: pods.map((p: k8s.V1Pod) => ({
                 name: p.metadata?.name,
                 status: p.status?.phase,
               })),
-              message: `${pods.length} pods would be deleted (dry run mode)`,
+              message: `${pods.length} pods would be deleted (client dry-run)`,
             };
           }
 
@@ -597,7 +606,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
 
           for (const pod of pods) {
             try {
-              await coreApi.deleteNamespacedPod({ name: pod.metadata?.name || "", namespace });
+              await coreApi.deleteNamespacedPod({ name: pod.metadata?.name || "", namespace, ...(serverDryRun ? { dryRun: "All" } : {}) });
               deleted++;
             } catch (error) {
               failed.push(pod.metadata?.name || "");
@@ -608,7 +617,10 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
             matched: pods.length,
             deleted,
             failed,
-            message: `Deleted ${deleted} of ${pods.length} pods`,
+            dryRun: dryRun || "none",
+            message: serverDryRun
+              ? `${deleted} of ${pods.length} pods validated for deletion (server dry-run)`
+              : `Deleted ${deleted} of ${pods.length} pods`,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_bulk_delete_pods", namespace };
@@ -1577,25 +1589,37 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               type: "string",
               description: "Subresource to patch (e.g., 'scale', 'status')",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "patch"],
         },
       },
-      handler: async ({ resource, name, namespace, patch, patchType, subresource }: { 
+      handler: async ({ resource, name, namespace, patch, patchType, subresource, dryRun }: { 
         resource: string; 
         name: string; 
         namespace?: string;
         patch: string | object;
         patchType?: string;
         subresource?: string;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
         // Parse patch if it's a string (declare outside try for catch block access)
         const patchData = typeof patch === "string" ? JSON.parse(patch) : patch;
+
+        if (isClientDryRun(dryRun)) {
+          return formatClientDryRunMutation({
+            operation: "Patch resource",
+            kind: resource,
+            name,
+            namespace: ns,
+            patch: patchData,
+            details: { patchType: patchType || "strategic", subresource },
+          });
+        }
         
         try {
-          
           // Determine content type based on patch type
           let contentType = "application/strategic-merge-patch+json";
           if (patchType === "merge") {
@@ -1606,6 +1630,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           
           const coreApi = k8sClient.getCoreV1Api();
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           
           let result: any;
           
@@ -1616,6 +1641,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 name,
                 namespace: ns,
                 body: patchData,
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: (context: k8s.RequestContext) => {
@@ -1636,6 +1662,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                   name,
                   namespace: ns,
                   body: patchData,
+                  dryRun: serverDryRunParam,
                 }, {
                   middleware: [{
                     pre: (context: k8s.RequestContext) => {
@@ -1650,6 +1677,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                   name,
                   namespace: ns,
                   body: patchData,
+                  dryRun: serverDryRunParam,
                 }, {
                   middleware: [{
                     pre: (context: k8s.RequestContext) => {
@@ -1664,7 +1692,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               
             case "node":
             case "nodes":
-              result = await k8sClient.patchNode(name, patchData);
+              result = await k8sClient.patchNode(name, patchData, { dryRun: serverDryRunParam });
               break;
               
             case "service":
@@ -1674,6 +1702,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 name,
                 namespace: ns,
                 body: patchData,
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: (context: k8s.RequestContext) => {
@@ -1692,6 +1721,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 name,
                 namespace: ns,
                 body: patchData,
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: (context: k8s.RequestContext) => {
@@ -1709,6 +1739,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 name,
                 namespace: ns,
                 body: patchData,
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: (context: k8s.RequestContext) => {
@@ -1727,6 +1758,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 name,
                 namespace: ns,
                 body: patchData,
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: (context: k8s.RequestContext) => {
@@ -1747,6 +1779,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             resource: `${resource}/${name}`,
             namespace: ns,
             patchType: patchType || "strategic",
@@ -1764,6 +1797,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               let contentType = "application/merge-patch+json";
               const coreApi = k8sClient.getCoreV1Api();
               const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
+              const serverDryRunParam = dryRun === "server" ? "All" : undefined;
               let result: any;
               
               const patchOptions = {
@@ -1779,19 +1813,19 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               switch (resource.toLowerCase()) {
                 case "pod":
                 case "pods":
-                  result = await coreApi.patchNamespacedPod({ name, namespace: ns, body: patchData }, patchOptions);
+                  result = await coreApi.patchNamespacedPod({ name, namespace: ns, body: patchData, dryRun: serverDryRunParam }, patchOptions);
                   break;
                 case "deployment":
                 case "deployments":
-                  result = await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: patchData }, patchOptions);
+                  result = await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: patchData, dryRun: serverDryRunParam }, patchOptions);
                   break;
                 case "service":
                 case "services":
-                  result = await coreApi.patchNamespacedService({ name, namespace: ns, body: patchData }, patchOptions);
+                  result = await coreApi.patchNamespacedService({ name, namespace: ns, body: patchData, dryRun: serverDryRunParam }, patchOptions);
                   break;
                 case "configmap":
                 case "configmaps":
-                  result = await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: patchData }, patchOptions);
+                  result = await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: patchData, dryRun: serverDryRunParam }, patchOptions);
                   break;
                 default:
                   throw error; // Re-throw if no fallback available
@@ -1799,6 +1833,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               
               return {
                 success: true,
+                dryRun: dryRun || "none",
                 resource: `${resource}/${name}`,
                 namespace: ns,
                 patchType: "merge",
@@ -1807,7 +1842,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
             } catch (fallbackError) {
               // Fallback also failed, return original error
               return { 
-                success: false,
+                success: false, 
                 error: classified.message,
                 type: classified.type,
                 suggestions: [...(classified.suggestions || []), "Try using patchType: 'merge' instead of 'strategic'"],
@@ -1816,7 +1851,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           }
           
           return { 
-            success: false,
+            success: false, 
             error: classified.message,
             type: classified.type,
             suggestions: classified.suggestions,
@@ -1892,9 +1927,10 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               description: "YAML/JSON manifest content to identify resources to delete (like kubectl delete -f)",
             },
             dryRun: {
-              type: "boolean",
-              description: "Dry run mode - show what would be deleted",
-              default: false,
+              type: "string",
+              enum: ["none", "client", "server"],
+              description: "Dry-run mode: 'client' previews without calling the API, 'server' validates via the API without persisting",
+              default: "none",
             },
             wait: {
               type: "boolean",
@@ -1919,12 +1955,14 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
         all?: boolean;
         cascade?: string;
         manifest?: string;
-        dryRun?: boolean;
+        dryRun?: string;
         wait?: boolean;
       }) => {
         const ns = namespace || "default";
         const gracePeriod = now ? 0 : gracePeriodSeconds;
-        
+        const serverDryRun = isServerDryRun(dryRun);
+        const isDry = isClientDryRun(dryRun) || serverDryRun;
+
         try {
           const coreApi = k8sClient.getCoreV1Api();
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
@@ -1946,7 +1984,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 const resName = doc.metadata.name;
                 const resNs = doc.metadata.namespace || ns;
                 
-                if (dryRun) {
+                if (isClientDryRun(dryRun)) {
                   deleted.push(`${kind}/${resNs}/${resName} (dry-run)`);
                   continue;
                 }
@@ -1964,7 +2002,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                 deleted,
                 failed: failed.length > 0 ? failed : undefined,
                 dryRun,
-                message: dryRun 
+                message: isDry 
                   ? `Would delete ${deleted.length} resources from manifest`
                   : `Deleted ${deleted.length} resources from manifest`,
               };
@@ -1980,7 +2018,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
             
             for (const resType of resources) {
               for (const targetName of targetNames) {
-                if (dryRun) {
+                if (isClientDryRun(dryRun)) {
                   deleted.push(`${resType}/${ns}/${targetName} (dry-run)`);
                   continue;
                 }
@@ -1998,7 +2036,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               success: failed.length === 0,
               deleted,
               failed: failed.length > 0 ? failed : undefined,
-              message: dryRun
+              message: isDry
                 ? `Would delete ${deleted.length} resources`
                 : `Deleted ${deleted.length} resources`,
             };
@@ -2019,7 +2057,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                   
                   if (!itemName) continue;
                   
-                  if (dryRun) {
+                  if (isClientDryRun(dryRun)) {
                     deleted.push(`${resType}/${itemNs}/${itemName} (dry-run)`);
                     continue;
                   }
@@ -2040,7 +2078,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               success: failed.length === 0,
               deleted,
               failed: failed.length > 0 ? failed : undefined,
-              message: dryRun
+              message: isDry
                 ? `Would delete ${deleted.length} resources (--all)`
                 : `Deleted ${deleted.length} resources (--all)`,
             };
@@ -2060,7 +2098,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
                   
                   if (!itemName) continue;
                   
-                  if (dryRun) {
+                  if (isClientDryRun(dryRun)) {
                     deleted.push(`${resType}/${itemNs}/${itemName} (dry-run, matched label)`);
                     continue;
                   }
@@ -2083,7 +2121,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               failed: failed.length > 0 ? failed : undefined,
               skipped: skipped.length > 0 ? skipped : undefined,
               labelSelector,
-              message: dryRun
+              message: isDry
                 ? `Would delete ${deleted.length} resources matching label selector`
                 : `Deleted ${deleted.length} resources matching label selector`,
             };
@@ -2109,9 +2147,10 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           coreApi: any, appsApi: any, batchApi: any, netApi: any,
           kind: string, resName: string, resNs: string, grace: number | undefined, forceDelete: boolean
         ) {
-          const options = grace !== undefined || forceDelete ? {
+          const options: any = grace !== undefined || forceDelete || serverDryRun ? {
             gracePeriodSeconds: grace,
             propagationPolicy: forceDelete ? "Foreground" : undefined,
+            ...(serverDryRun ? { dryRun: "All" } : {}),
           } : undefined;
           
           switch (kind) {
@@ -2399,74 +2438,89 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               enum: ["strategic", "merge", "json"],
               default: "strategic",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "patch"],
         },
       },
-      handler: async ({ resource, name, namespace, patch, patchType }: { 
+      handler: async ({ resource, name, namespace, patch, patchType, dryRun }: { 
         resource: string; 
         name: string;
         namespace?: string;
         patch: any;
         patchType?: string;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
         try {
           validateResourceName(name, resource);
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Patch resource",
+              kind: resource,
+              name,
+              namespace: ns,
+              patch,
+              details: { patchType: patchType || "strategic" },
+            });
+          }
+
           const coreApi = k8sClient.getCoreV1Api();
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
           const netApi = (k8sClient as any).kc.makeApiClient(k8s.NetworkingV1Api);
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           
           let result: any;
           
           switch (resource.toLowerCase()) {
             case "pod":
             case "pods":
-              result = await coreApi.patchNamespacedPod({ name, namespace: ns, body: patch }, {});
+              result = await coreApi.patchNamespacedPod({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "deployment":
             case "deployments":
-              result = await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: patch }, {});
+              result = await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "service":
             case "svc":
             case "services":
-              result = await coreApi.patchNamespacedService({ name, namespace: ns, body: patch }, {});
+              result = await coreApi.patchNamespacedService({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "configmap":
             case "configmaps":
             case "cm":
-              result = await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: patch }, {});
+              result = await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "secret":
             case "secrets":
-              result = await coreApi.patchNamespacedSecret({ name, namespace: ns, body: patch }, {});
+              result = await coreApi.patchNamespacedSecret({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "statefulset":
             case "statefulsets":
             case "sts":
-              result = await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: patch }, {});
+              result = await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "daemonset":
             case "daemonsets":
             case "ds":
-              result = await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: patch }, {});
+              result = await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "replicaset":
             case "replicasets":
             case "rs":
-              result = await appsApi.patchNamespacedReplicaSet({ name, namespace: ns, body: patch }, {});
+              result = await appsApi.patchNamespacedReplicaSet({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "ingress":
             case "ingresses":
             case "ing":
-              result = await netApi.patchNamespacedIngress({ name, namespace: ns, body: patch }, {});
+              result = await netApi.patchNamespacedIngress({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
               break;
             case "node":
             case "nodes":
             case "no":
-              result = await coreApi.patchNode({ name, body: patch }, {});
+              result = await coreApi.patchNode({ name, body: patch, dryRun: serverDryRunParam }, {});
               break;
             default:
               return {
@@ -2477,6 +2531,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Patched ${resource}/${name}`,
             patchType: patchType || "strategic",
           };
@@ -2531,16 +2586,18 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               type: "string",
               description: "Label selector when using --all",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "labels"],
         },
       },
-      handler: async ({ resource, name, namespace, labels, overwrite }: { 
+      handler: async ({ resource, name, namespace, labels, overwrite, dryRun }: { 
         resource: string; 
         name: string;
         namespace?: string;
         labels: Record<string, string | null>;
         overwrite?: boolean;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -2560,6 +2617,19 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               labelPatch.metadata.labels[key] = value;
             }
           }
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Label resource",
+              kind: resource,
+              name,
+              namespace: ns,
+              patch: labelPatch,
+              details: { labels, overwrite },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           
           const patchOptions = {
             middleware: [{
@@ -2574,45 +2644,45 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           switch (resource.toLowerCase()) {
             case "pod":
             case "pods":
-              await coreApi.patchNamespacedPod({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await coreApi.patchNamespacedPod({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "deployment":
             case "deployments":
-              await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "service":
             case "svc":
             case "services":
-              await coreApi.patchNamespacedService({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await coreApi.patchNamespacedService({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "configmap":
             case "configmaps":
             case "cm":
-              await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "secret":
             case "secrets":
-              await coreApi.patchNamespacedSecret({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await coreApi.patchNamespacedSecret({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "statefulset":
             case "statefulsets":
             case "sts":
-              await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "daemonset":
             case "daemonsets":
             case "ds":
-              await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "replicaset":
             case "replicasets":
             case "rs":
-              await appsApi.patchNamespacedReplicaSet({ name, namespace: ns, body: labelPatch }, patchOptions);
+              await appsApi.patchNamespacedReplicaSet({ name, namespace: ns, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "node":
             case "nodes":
             case "no":
-              await coreApi.patchNode({ name, body: labelPatch }, patchOptions);
+              await coreApi.patchNode({ name, body: labelPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             default:
               return {
@@ -2626,6 +2696,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Labels updated on ${resource}/${name}`,
             added: added.length > 0 ? added : undefined,
             removed: removed.length > 0 ? removed : undefined,
@@ -2672,16 +2743,18 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               description: "Overwrite existing annotations",
               default: true,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "annotations"],
         },
       },
-      handler: async ({ resource, name, namespace, annotations, overwrite }: { 
+      handler: async ({ resource, name, namespace, annotations, overwrite, dryRun }: { 
         resource: string; 
         name: string;
         namespace?: string;
         annotations: Record<string, string | null>;
         overwrite?: boolean;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -2701,6 +2774,19 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               annotationPatch.metadata.annotations[key] = value;
             }
           }
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Annotate resource",
+              kind: resource,
+              name,
+              namespace: ns,
+              patch: annotationPatch,
+              details: { annotations, overwrite },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           
           const patchOptions = {
             middleware: [{
@@ -2715,45 +2801,45 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           switch (resource.toLowerCase()) {
             case "pod":
             case "pods":
-              await coreApi.patchNamespacedPod({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await coreApi.patchNamespacedPod({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "deployment":
             case "deployments":
-              await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await appsApi.patchNamespacedDeployment({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "service":
             case "svc":
             case "services":
-              await coreApi.patchNamespacedService({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await coreApi.patchNamespacedService({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "configmap":
             case "configmaps":
             case "cm":
-              await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await coreApi.patchNamespacedConfigMap({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "secret":
             case "secrets":
-              await coreApi.patchNamespacedSecret({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await coreApi.patchNamespacedSecret({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "statefulset":
             case "statefulsets":
             case "sts":
-              await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "daemonset":
             case "daemonsets":
             case "ds":
-              await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "replicaset":
             case "replicasets":
             case "rs":
-              await appsApi.patchNamespacedReplicaSet({ name, namespace: ns, body: annotationPatch }, patchOptions);
+              await appsApi.patchNamespacedReplicaSet({ name, namespace: ns, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             case "node":
             case "nodes":
             case "no":
-              await coreApi.patchNode({ name, body: annotationPatch }, patchOptions);
+              await coreApi.patchNode({ name, body: annotationPatch, dryRun: serverDryRunParam }, patchOptions);
               break;
             default:
               return {
@@ -2767,6 +2853,7 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Annotations updated on ${resource}/${name}`,
             added: added.length > 0 ? added : undefined,
             removed: removed.length > 0 ? removed : undefined,
@@ -2790,34 +2877,64 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
         description: "List Custom Resource Definitions (CRDs) in the cluster",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            ...commonListQuerySchema,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({
+        labelSelector,
+        fieldSelector,
+        sortBy,
+        descending,
+        limit,
+      }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           const rawClient = k8sClient as any;
-          const result = await rawClient.rawApiRequest("/apis/apiextensions.k8s.io/v1/customresourcedefinitions");
+          let path = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions";
+          const params = new URLSearchParams();
+          if (labelSelector) params.append("labelSelector", labelSelector);
+          if (fieldSelector) params.append("fieldSelector", fieldSelector);
+          const qs = params.toString();
+          if (qs) path += `?${qs}`;
+
+          const result = await rawClient.rawApiRequest(path);
           
           if (!result || !result.items) {
             return {
               customResourceDefinitions: [],
               total: 0,
+              returned: 0,
             };
           }
           
+          const mapped = result.items.map((crd: any) => ({
+            name: crd.metadata?.name,
+            group: crd.spec?.group,
+            version: crd.spec?.versions?.[0]?.name,
+            versions: crd.spec?.versions?.map((v: any) => v.name),
+            scope: crd.spec?.scope,
+            kind: crd.spec?.names?.kind,
+            plural: crd.spec?.names?.plural,
+            shortNames: crd.spec?.names?.shortNames,
+            age: crd.metadata?.creationTimestamp,
+            creationTimestamp: crd.metadata?.creationTimestamp,
+            labels: crd.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            customResourceDefinitions: result.items.map((crd: any) => ({
-              name: crd.metadata?.name,
-              group: crd.spec?.group,
-              version: crd.spec?.versions?.[0]?.name,
-              versions: crd.spec?.versions?.map((v: any) => v.name),
-              scope: crd.spec?.scope,
-              kind: crd.spec?.names?.kind,
-              plural: crd.spec?.names?.plural,
-              shortNames: crd.spec?.names?.shortNames,
-              age: crd.metadata?.creationTimestamp,
-            })),
-            total: result.items.length,
+            customResourceDefinitions: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_crd" };
@@ -2859,23 +2976,36 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               type: "string",
               description: "Name of the resource",
             },
+            ...commonGetQuerySchema,
           },
           required: ["group", "version", "plural", "namespace", "name"],
         },
       },
-      handler: async ({ group, version, plural, namespace, name }: { 
+      handler: async ({
+        group,
+        version,
+        plural,
+        namespace,
+        name,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: { 
         group: string; 
         version: string; 
         plural: string;
         namespace: string;
         name: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
       }) => {
         try {
           const rawClient = k8sClient as any;
           const path = `/apis/${group}/${version}/namespaces/${namespace}/${plural}/${name}`;
           const result = await rawClient.rawApiRequest(path);
           
-          return {
+          const rawResult = {
             success: true,
             customResource: {
               apiVersion: result.apiVersion,
@@ -2891,7 +3021,23 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               status: result.status,
             },
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: result.kind || plural,
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace,
+              message: `Custom resource '${plural}/${name}' not found in namespace '${namespace}'`,
+            };
+          }
           const context: ErrorContext = { 
             operation: "k8s_get_custom_resource", 
             resource: `${group}/${version}/${plural}/${name}`,
@@ -2931,43 +3077,73 @@ export function registerAdvancedTools(k8sClient: K8sClient, cacheManager?: Cache
               type: "string",
               description: "Namespace (omit for cluster-scoped resources)",
             },
+            ...commonListQuerySchema,
           },
           required: ["group", "version", "plural"],
         },
       },
-      handler: async ({ group, version, plural, namespace }: { 
+      handler: async ({
+        group,
+        version,
+        plural,
+        namespace,
+        labelSelector,
+        fieldSelector,
+        sortBy,
+        descending,
+        limit,
+      }: { 
         group: string; 
         version: string; 
         plural: string;
         namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
       }) => {
         try {
           const rawClient = k8sClient as any;
-          const path = namespace
+          let path = namespace
             ? `/apis/${group}/${version}/namespaces/${namespace}/${plural}`
             : `/apis/${group}/${version}/${plural}`;
           
+          const params = new URLSearchParams();
+          if (labelSelector) params.append("labelSelector", labelSelector);
+          if (fieldSelector) params.append("fieldSelector", fieldSelector);
+          const qs = params.toString();
+          if (qs) path += `?${qs}`;
+
           const result = await rawClient.rawApiRequest(path);
           
           if (!result || !result.items) {
             return {
               customResources: [],
               total: 0,
+              returned: 0,
               apiVersion: result?.apiVersion || `${group}/${version}`,
             };
           }
           
+          const mapped = result.items.map((cr: any) => ({
+            name: cr.metadata?.name,
+            namespace: cr.metadata?.namespace,
+            creationTimestamp: cr.metadata?.creationTimestamp,
+            labels: cr.metadata?.labels,
+            annotations: cr.metadata?.annotations,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            customResources: result.items.map((cr: any) => ({
-              name: cr.metadata?.name,
-              namespace: cr.metadata?.namespace,
-              creationTimestamp: cr.metadata?.creationTimestamp,
-              labels: cr.metadata?.labels,
-              annotations: cr.metadata?.annotations,
-            })),
-            total: result.items.length,
+            customResources: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
             apiVersion: result.apiVersion,
             kind: result.kind,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { 

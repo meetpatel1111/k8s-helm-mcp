@@ -2,7 +2,7 @@
 
 This document provides auto-generated API documentation for all Kubernetes and Helm tools.
 
-**Generated:** 2026-05-08T11:42:19.466Z
+**Generated:** 2026-09-08T20:25:39.387Z
 
 ## Summary
 
@@ -91,7 +91,14 @@ Get comprehensive cluster health overview including nodes, pods, and components
 
 List all namespaces in the cluster
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_api_latency_check
 
@@ -141,6 +148,7 @@ Create a PriorityClass (like kubectl create priorityclass)
 - **description** (stringoptional): Description of the PriorityClass
 - **globalDefault** (booleanoptional) (default: false): Set as global default priority class
 - **preemptionPolicy** (stringoptional) (default: "PreemptLowerPriority") [enum: Never, PreemptLowerPriority]: Preemption policy (Never or PreemptLowerPriority)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_config_delete_context
 
@@ -163,7 +171,14 @@ Rename a context in kubeconfig (like kubectl config rename-context)
 
 List RuntimeClasses in the cluster (like kubectl get runtimeclass)
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_list_leases
 
@@ -172,6 +187,12 @@ List Lease objects (coordination API, like kubectl get lease)
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace (default: all namespaces)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_config_set
 
@@ -204,6 +225,10 @@ Apply a Kubernetes manifest (YAML or JSON)
 
 - **manifest** (string, required): YAML or JSON manifest content to apply
 - **namespace** (stringoptional) (default: "default"): Default namespace for resources without namespace specified
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate manifest locally without sending to cluster. If 'server', execute server-side dry-run request.
+- **fieldManager** (stringoptional) (default: "k8s-helm-mcp"): Name of the manager used to track field ownership in server-side apply (default: 'k8s-helm-mcp').
+- **forceConflicts** (booleanoptional) (default: false): Force apply changes by taking ownership of conflicting fields in server-side apply.
+- **serverSide** (booleanoptional) (default: false): If true, apply runs on the server instead of the client (Server-Side Apply).
 
 ### k8s_export_resource
 
@@ -243,6 +268,7 @@ Create a new namespace
 
 - **name** (string, required): Name of the namespace
 - **labels** (objectoptional): Labels to apply to the namespace
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_delete_namespace
 
@@ -252,6 +278,10 @@ Delete a namespace
 
 - **name** (string, required): Name of the namespace to delete
 - **force** (booleanoptional) (default: false): Force delete (remove finalizers)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_config_view
 
@@ -310,7 +340,10 @@ Delete a ConfigMap
 
 - **name** (string, required): Name of the ConfigMap to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the ConfigMap
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_secret
 
@@ -320,7 +353,10 @@ Delete a Secret
 
 - **name** (string, required): Name of the Secret to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the Secret
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_create_configmap
 
@@ -335,6 +371,7 @@ Create a Kubernetes ConfigMap
   Items: string
 - **fromLiteral** (objectoptional): Create from literal key-value pairs
 - **immutable** (booleanoptional) (default: false): Prevent updates to this ConfigMap
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_secret
 
@@ -356,6 +393,7 @@ Create a Kubernetes Secret (generic, TLS, or docker-registry)
 - **cert** (stringoptional): TLS certificate file path or content (for TLS type)
 - **key** (stringoptional): TLS key file path or content (for TLS type)
 - **immutable** (booleanoptional) (default: false): Prevent updates to this Secret
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_replace
 
@@ -488,8 +526,13 @@ List cluster events
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
-- **fieldSelector** (stringoptional): Field selector (e.g., reason=FailedScheduling)
 - **type** (stringoptional): Event type filter (Normal, Warning)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_get_resource_quotas
 
@@ -498,6 +541,12 @@ List ResourceQuotas per namespace
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_get_limit_ranges
 
@@ -506,6 +555,12 @@ List LimitRanges per namespace
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_find_crashloop_pods
 
@@ -570,6 +625,7 @@ Create a ResourceQuota to limit resource consumption in a namespace
 - **scopeSelector** (objectoptional): Scope selector to match pods
 - **scopes** (arrayoptional): Scopes for the quota (e.g., Terminating, NotTerminating)
   Items: string
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_limit_range
 
@@ -587,6 +643,7 @@ Create a LimitRange to set default resource limits for pods/containers in a name
     - **default** (objectoptional): Default resource limits
     - **defaultRequest** (objectoptional): Default resource requests
     - **maxLimitRequestRatio** (objectoptional): Max limit/request ratio
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_delete_limitrange
 
@@ -596,7 +653,10 @@ Delete a LimitRange
 
 - **name** (string, required): Name of the LimitRange to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the LimitRange
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_resourcequota
 
@@ -606,7 +666,10 @@ Delete a ResourceQuota
 
 - **name** (string, required): Name of the ResourceQuota to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the ResourceQuota
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_list_pod_disruption_budgets
 
@@ -615,6 +678,12 @@ List PodDisruptionBudgets (PDBs) for protecting pods during voluntary disruption
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ## Networking Tools
 
@@ -629,6 +698,11 @@ List all services
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_service
 
@@ -638,6 +712,9 @@ Get detailed information about a Service
 
 - **name** (string, required): Name of the Service
 - **namespace** (stringoptional) (default: "default"): Namespace of the Service
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_service_endpoints
 
@@ -647,6 +724,9 @@ Get endpoints for a service
 
 - **name** (string, required): Name of the service
 - **namespace** (stringoptional) (default: "default"): Namespace of the service
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_list_ingresses
 
@@ -655,6 +735,11 @@ List all Ingresses
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_network_policies
 
@@ -663,6 +748,11 @@ List all NetworkPolicies
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_ingress
 
@@ -672,6 +762,9 @@ Get detailed information about an Ingress
 
 - **name** (string, required): Name of the Ingress
 - **namespace** (stringoptional) (default: "default"): Namespace of the Ingress
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_network_policy
 
@@ -681,6 +774,9 @@ Get detailed information about a NetworkPolicy
 
 - **name** (string, required): Name of the NetworkPolicy
 - **namespace** (stringoptional) (default: "default"): Namespace of the NetworkPolicy
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_test_dns
 
@@ -707,7 +803,10 @@ Delete a Service
 
 - **name** (string, required): Name of the Service to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the Service
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_ingress
 
@@ -717,7 +816,10 @@ Delete an Ingress
 
 - **name** (string, required): Name of the Ingress to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the Ingress
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_create_service
 
@@ -736,6 +838,7 @@ Create a new Kubernetes Service
     - **protocol** (stringoptional) (default: "TCP"): 
     - **name** (stringoptional): 
 - **externalName** (stringoptional): External name for ExternalName type service
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_expose
 
@@ -774,6 +877,7 @@ Create a new Kubernetes Ingress
       Items: string
     - **secretName** (stringoptional): 
 - **annotations** (objectoptional): Ingress annotations (e.g., nginx.ingress.kubernetes.io/rewrite-target)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_networkpolicy
 
@@ -794,6 +898,7 @@ Create a Kubernetes NetworkPolicy to control traffic flow
   Items:
     - **to** (arrayoptional): 
     - **ports** (arrayoptional): 
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_list_endpoints
 
@@ -803,6 +908,11 @@ List Endpoints for services (like kubectl get endpoints)
 
 - **namespace** (stringoptional): Namespace (default: all namespaces)
 - **service** (stringoptional): Filter by service name
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_endpointslice
 
@@ -812,12 +922,23 @@ List EndpointSlices (modern replacement for Endpoints, like kubectl get endpoint
 
 - **namespace** (stringoptional): Namespace (default: all namespaces)
 - **service** (stringoptional): Filter by service name (label selector)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_ingressclass
 
 List IngressClasses (like kubectl get ingressclass)
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ## Nodes Tools
 
@@ -829,7 +950,13 @@ Node management and operations
 
 List all nodes in the cluster with status and resource information
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_node
 
@@ -838,6 +965,9 @@ Get detailed information about a specific node
 **Parameters:**
 
 - **name** (string, required): Name of the node
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_cordon_node
 
@@ -846,6 +976,7 @@ Mark a node as unschedulable (cordon)
 **Parameters:**
 
 - **name** (string, required): Name of the node to cordon
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_uncordon_node
 
@@ -854,6 +985,7 @@ Mark a node as schedulable (uncordon)
 **Parameters:**
 
 - **name** (string, required): Name of the node to uncordon
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_drain_node
 
@@ -864,6 +996,7 @@ Drain a node by cordoning it and evicting all pods
 - **name** (string, required): Name of the node to drain
 - **force** (booleanoptional) (default: false): Force deletion of pods with local storage
 - **gracePeriodSeconds** (numberoptional) (default: 30): Grace period for pod termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_add_node_taint
 
@@ -875,6 +1008,7 @@ Add a taint to a node
 - **key** (string, required): Taint key
 - **value** (stringoptional): Taint value
 - **effect** (string, required) [enum: NoSchedule, PreferNoSchedule, NoExecute]: Taint effect (NoSchedule, PreferNoSchedule, NoExecute)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_remove_node_taint
 
@@ -885,6 +1019,7 @@ Remove a taint from a node
 - **name** (string, required): Name of the node
 - **key** (string, required): Taint key to remove
 - **effect** (stringoptional) [enum: NoSchedule, PreferNoSchedule, NoExecute]: Taint effect (optional, removes all matching keys if not specified)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_add_node_label
 
@@ -895,6 +1030,7 @@ Add or update a label on a node
 - **name** (string, required): Name of the node
 - **key** (string, required): Label key
 - **value** (string, required): Label value
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_remove_node_label
 
@@ -904,6 +1040,7 @@ Remove a label from a node
 
 - **name** (string, required): Name of the node
 - **key** (string, required): Label key to remove
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_node_pressure_status
 
@@ -926,8 +1063,11 @@ List pods across all namespaces or a specific namespace
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter by (optional, shows all if not specified)
-- **labelSelector** (stringoptional): Label selector to filter pods
-- **fieldSelector** (stringoptional): Field selector to filter pods
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 - **context** (stringoptional): Kubernetes context to use (from kubeconfig). Uses current context if not specified
 
 ### k8s_get_pod
@@ -938,6 +1078,9 @@ Get detailed information about a specific pod
 
 - **name** (string, required): Name of the pod
 - **namespace** (stringoptional) (default: "default"): Namespace of the pod
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_logs
 
@@ -977,7 +1120,10 @@ Delete a pod
 
 - **name** (string, required): Name of the pod to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the pod
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_describe_pod
 
@@ -1014,6 +1160,7 @@ Restart a pod by deleting it (will be recreated if part of a controller)
 
 - **name** (string, required): Name of the pod to restart
 - **namespace** (stringoptional) (default: "default"): Namespace of the pod
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_debug_scheduling
 
@@ -1098,6 +1245,11 @@ List all ServiceAccounts
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_roles
 
@@ -1106,12 +1258,23 @@ List all Roles
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_clusterroles
 
 List all ClusterRoles
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_rolebindings
 
@@ -1120,12 +1283,23 @@ List all RoleBindings
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_clusterrolebindings
 
 List all ClusterRoleBindings
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_secrets
 
@@ -1135,6 +1309,11 @@ List all Secrets (values are masked)
 
 - **namespace** (stringoptional): Namespace to filter
 - **type** (stringoptional): Filter by secret type (e.g., kubernetes.io/tls, Opaque)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_configmaps
 
@@ -1143,6 +1322,11 @@ List all ConfigMaps
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_secret
 
@@ -1153,6 +1337,9 @@ Get detailed information about a Secret (values are masked)
 - **name** (string, required): Name of the Secret
 - **namespace** (stringoptional) (default: "default"): Namespace of the Secret
 - **decode** (booleanoptional) (default: false): Decode base64 values (use with caution)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_serviceaccount
 
@@ -1162,6 +1349,9 @@ Get detailed information about a ServiceAccount
 
 - **name** (string, required): Name of the ServiceAccount
 - **namespace** (stringoptional) (default: "default"): Namespace of the ServiceAccount
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_role
 
@@ -1171,6 +1361,9 @@ Get detailed information about a Role
 
 - **name** (string, required): Name of the Role
 - **namespace** (stringoptional) (default: "default"): Namespace of the Role
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_clusterrole
 
@@ -1179,6 +1372,9 @@ Get detailed information about a ClusterRole
 **Parameters:**
 
 - **name** (string, required): Name of the ClusterRole
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_rolebinding
 
@@ -1188,6 +1384,9 @@ Get detailed information about a RoleBinding
 
 - **name** (string, required): Name of the RoleBinding
 - **namespace** (stringoptional) (default: "default"): Namespace of the RoleBinding
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_clusterrolebinding
 
@@ -1196,6 +1395,9 @@ Get detailed information about a ClusterRoleBinding
 **Parameters:**
 
 - **name** (string, required): Name of the ClusterRoleBinding
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_configmap
 
@@ -1206,6 +1408,9 @@ Get detailed ConfigMap data
 - **name** (string, required): Name of the ConfigMap
 - **namespace** (stringoptional) (default: "default"): Namespace of the ConfigMap
 - **scrub** (booleanoptional) (default: false): Mask potential secrets in ConfigMap data
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_rbac_summary
 
@@ -1233,7 +1438,10 @@ Delete a ServiceAccount
 
 - **name** (string, required): Name of the ServiceAccount to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the ServiceAccount
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_role
 
@@ -1243,7 +1451,10 @@ Delete a Role
 
 - **name** (string, required): Name of the Role to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the Role
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_clusterrole
 
@@ -1252,7 +1463,10 @@ Delete a ClusterRole
 **Parameters:**
 
 - **name** (string, required): Name of the ClusterRole to delete
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_rolebinding
 
@@ -1262,7 +1476,10 @@ Delete a RoleBinding
 
 - **name** (string, required): Name of the RoleBinding to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the RoleBinding
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_clusterrolebinding
 
@@ -1271,7 +1488,10 @@ Delete a ClusterRoleBinding
 **Parameters:**
 
 - **name** (string, required): Name of the ClusterRoleBinding to delete
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_create_serviceaccount
 
@@ -1284,6 +1504,7 @@ Create a Kubernetes ServiceAccount
 - **automountToken** (booleanoptional) (default: true): Allow automounting service account token
 - **labels** (objectoptional): Labels to apply
 - **annotations** (objectoptional): Annotations to apply
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_role
 
@@ -1305,6 +1526,7 @@ Create a Kubernetes Role (namespaced permissions)
       Items: string
 - **labels** (objectoptional): Labels to apply
 - **annotations** (objectoptional): Annotations to apply
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_rolebinding
 
@@ -1323,6 +1545,7 @@ Create a Kubernetes RoleBinding (binds Role to users/groups/serviceaccounts)
     - **namespace** (stringoptional): 
     - **apiGroup** (stringoptional): 
 - **labels** (objectoptional): Labels to apply
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_clusterrole
 
@@ -1346,6 +1569,7 @@ Create a Kubernetes ClusterRole (cluster-wide permissions)
 - **labels** (objectoptional): Labels to apply
 - **annotations** (objectoptional): Annotations to apply
 - **aggregationRule** (objectoptional): Aggregation rule for combining cluster roles
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_clusterrolebinding
 
@@ -1362,6 +1586,7 @@ Create a Kubernetes ClusterRoleBinding (binds ClusterRole to users/groups/servic
     - **namespace** (stringoptional): 
     - **apiGroup** (stringoptional): 
 - **labels** (objectoptional): Labels to apply
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_auth_can_i
 
@@ -1381,7 +1606,13 @@ Check if you can perform an action (like kubectl auth can-i)
 
 List Certificate Signing Requests (CSR)
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_certificate_approve
 
@@ -1422,7 +1653,13 @@ Persistent volumes, claims, and storage operations
 
 List all PersistentVolumes
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_pvcs
 
@@ -1431,12 +1668,23 @@ List all PersistentVolumeClaims
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_list_storageclasses
 
 List all StorageClasses
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_pv
 
@@ -1445,6 +1693,9 @@ Get detailed information about a PersistentVolume
 **Parameters:**
 
 - **name** (string, required): Name of the PersistentVolume
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_storageclass
 
@@ -1453,6 +1704,9 @@ Get detailed information about a StorageClass
 **Parameters:**
 
 - **name** (string, required): Name of the StorageClass
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_get_pvc_details
 
@@ -1462,6 +1716,9 @@ Get detailed information about a PVC including events
 
 - **name** (string, required): Name of the PVC
 - **namespace** (stringoptional) (default: "default"): Namespace of the PVC
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_find_unbound_pvcs
 
@@ -1485,7 +1742,10 @@ Delete a PersistentVolumeClaim
 
 - **name** (string, required): Name of the PVC to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the PVC
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_create_pvc
 
@@ -1503,6 +1763,7 @@ Create a PersistentVolumeClaim (like kubectl create pvc or apply -f pvc.yaml)
 - **volumeMode** (stringoptional) (default: "Filesystem") [enum: Filesystem, Block]: Volume mode (Filesystem or Block)
 - **labels** (objectoptional): Labels to add to the PVC
 - **annotations** (objectoptional): Annotations to add to the PVC
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_pv
 
@@ -1523,6 +1784,7 @@ Create a PersistentVolume (cluster admin operation, like kubectl create pv or ap
 - **csiDriver** (stringoptional): CSI driver name (for CSI volumes)
 - **csiVolumeHandle** (stringoptional): CSI volume handle (for CSI volumes)
 - **nodeAffinity** (objectoptional): Node affinity for local volumes
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ## Templates Tools
 
@@ -1637,6 +1899,11 @@ List all deployments
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter (optional, all if not specified)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_deployment
 
@@ -1646,6 +1913,9 @@ Get detailed information about a deployment
 
 - **name** (string, required): Name of the deployment
 - **namespace** (stringoptional) (default: "default"): Namespace of the deployment
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_scale_deployment
 
@@ -1656,6 +1926,7 @@ Scale a deployment to a specific number of replicas
 - **name** (string, required): Name of the deployment
 - **namespace** (stringoptional) (default: "default"): Namespace of the deployment
 - **replicas** (number, required): Number of replicas
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_restart_deployment
 
@@ -1665,6 +1936,7 @@ Perform a rolling restart of a deployment
 
 - **name** (string, required): Name of the deployment
 - **namespace** (stringoptional) (default: "default"): Namespace of the deployment
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_rollback_deployment
 
@@ -1683,6 +1955,11 @@ List all StatefulSets
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_statefulset
 
@@ -1692,6 +1969,9 @@ Get detailed information about a StatefulSet
 
 - **name** (string, required): Name of the StatefulSet
 - **namespace** (stringoptional) (default: "default"): Namespace of the StatefulSet
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_delete_statefulset
 
@@ -1702,6 +1982,10 @@ Delete a StatefulSet
 - **name** (string, required): Name of the StatefulSet to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the StatefulSet
 - **cascade** (booleanoptional) (default: true): Delete pods owned by the StatefulSet
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_list_daemonsets
 
@@ -1710,6 +1994,11 @@ List all DaemonSets
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_daemonset
 
@@ -1719,6 +2008,9 @@ Get detailed information about a DaemonSet
 
 - **name** (string, required): Name of the DaemonSet
 - **namespace** (stringoptional) (default: "default"): Namespace of the DaemonSet
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_delete_daemonset
 
@@ -1728,6 +2020,10 @@ Delete a DaemonSet
 
 - **name** (string, required): Name of the DaemonSet to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the DaemonSet
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_list_replicasets
 
@@ -1736,6 +2032,11 @@ List all ReplicaSets
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_replicaset
 
@@ -1745,6 +2046,9 @@ Get detailed information about a ReplicaSet
 
 - **name** (string, required): Name of the ReplicaSet
 - **namespace** (stringoptional) (default: "default"): Namespace of the ReplicaSet
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_delete_replicaset
 
@@ -1755,6 +2059,10 @@ Delete a ReplicaSet
 - **name** (string, required): Name of the ReplicaSet to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the ReplicaSet
 - **cascade** (booleanoptional) (default: true): Delete pods owned by the ReplicaSet
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_list_jobs
 
@@ -1763,6 +2071,11 @@ List all Jobs
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_job
 
@@ -1772,6 +2085,9 @@ Get detailed information about a Job
 
 - **name** (string, required): Name of the Job
 - **namespace** (stringoptional) (default: "default"): Namespace of the Job
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_delete_job
 
@@ -1782,6 +2098,10 @@ Delete a Job
 - **name** (string, required): Name of the Job to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the Job
 - **cascade** (booleanoptional) (default: true): Delete pods owned by the Job
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_trigger_job
 
@@ -1791,6 +2111,7 @@ Manually trigger a CronJob to create a Job
 
 - **name** (string, required): Name of the CronJob
 - **namespace** (stringoptional) (default: "default"): Namespace of the CronJob
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_list_cronjobs
 
@@ -1799,6 +2120,11 @@ List all CronJobs
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_cronjob
 
@@ -1808,6 +2134,9 @@ Get detailed information about a CronJob
 
 - **name** (string, required): Name of the CronJob
 - **namespace** (stringoptional) (default: "default"): Namespace of the CronJob
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_deployment_rollout_status
 
@@ -1836,6 +2165,7 @@ Rollback a deployment to a previous revision
 - **name** (string, required): Name of the deployment
 - **namespace** (stringoptional) (default: "default"): Namespace of the deployment
 - **revision** (numberoptional): Revision to rollback to (optional, rolls back to previous if not specified)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_deployment
 
@@ -1853,6 +2183,7 @@ Create a deployment imperatively (like kubectl create deployment)
 - **labels** (objectoptional): Additional labels
 - **imagePullSecrets** (arrayoptional): Image pull secrets for private registries (e.g., ACR, ECR, GCR)
   Items: string
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_job
 
@@ -1868,6 +2199,7 @@ Create a job imperatively (like kubectl create job)
 - **restartPolicy** (stringoptional) (default: "Never") [enum: Never, OnFailure]: Restart policy
 - **completions** (numberoptional): Number of successful completions needed
 - **parallelism** (numberoptional): Number of pods to run in parallel
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_cronjob
 
@@ -1883,6 +2215,7 @@ Create a cronjob imperatively (like kubectl create cronjob)
   Items: string
 - **restartPolicy** (stringoptional) (default: "Never") [enum: Never, OnFailure]: Restart policy
 - **suspend** (booleanoptional) (default: false): Suspend cronjob scheduling
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_set_image
 
@@ -1894,6 +2227,7 @@ Update container image in a deployment (like kubectl set image)
 - **namespace** (stringoptional) (default: "default"): Namespace
 - **container** (stringoptional): Container name (defaults to first container if not specified)
 - **image** (string, required): New container image
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_autoscale
 
@@ -1906,6 +2240,7 @@ Auto-scale a deployment (like kubectl autoscale)
 - **min** (number, required) (default: 1): Minimum number of replicas
 - **max** (number, required) (default: 10): Maximum number of replicas
 - **cpuPercent** (numberoptional) (default: 80): Target CPU utilization percentage
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_label
 
@@ -1918,6 +2253,7 @@ Add or remove labels on resources (like kubectl label)
 - **namespace** (stringoptional) (default: "default"): Namespace (for namespaced resources)
 - **labels** (object, required): Labels to add (key-value pairs). Use null value to remove a label.
 - **overwrite** (booleanoptional) (default: false): Overwrite existing labels
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_annotate
 
@@ -1930,6 +2266,7 @@ Add or remove annotations on resources (like kubectl annotate)
 - **namespace** (stringoptional) (default: "default"): Namespace (for namespaced resources)
 - **annotations** (object, required): Annotations to add (key-value pairs). Use null value to remove an annotation.
 - **overwrite** (booleanoptional) (default: false): Overwrite existing annotations
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_scale
 
@@ -1945,6 +2282,7 @@ Scale deployments, replicasets, statefulsets (like kubectl scale). Supports sing
 - **replicas** (number, required): Number of replicas
 - **currentReplicas** (numberoptional): Current replicas (for conditional scaling - only scales if current matches)
 - **manifest** (stringoptional): YAML/JSON manifest content to identify resource (like kubectl scale -f)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_delete_deployment
 
@@ -1954,8 +2292,11 @@ Delete a Deployment
 
 - **name** (string, required): Name of the Deployment to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the Deployment
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
 - **force** (booleanoptional) (default: false): Force delete (immediate removal)
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_delete_cronjob
 
@@ -1965,7 +2306,10 @@ Delete a CronJob
 
 - **name** (string, required): Name of the CronJob to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the CronJob
-- **gracePeriodSeconds** (numberoptional): Grace period for termination
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_rollout_pause
 
@@ -1975,6 +2319,7 @@ Pause a deployment rollout (like kubectl rollout pause)
 
 - **deployment** (string, required): Name of the deployment to pause
 - **namespace** (stringoptional) (default: "default"): Namespace of the deployment
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_rollout_resume
 
@@ -1984,6 +2329,7 @@ Resume a paused deployment rollout (like kubectl rollout resume)
 
 - **deployment** (string, required): Name of the deployment to resume
 - **namespace** (stringoptional) (default: "default"): Namespace of the deployment
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_restart_statefulset
 
@@ -1993,6 +2339,7 @@ Restart a StatefulSet by updating its pod template (like kubectl rollout restart
 
 - **name** (string, required): Name of the StatefulSet to restart
 - **namespace** (stringoptional) (default: "default"): Namespace of the StatefulSet
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_restart_daemonset
 
@@ -2002,6 +2349,7 @@ Restart a DaemonSet by updating its pod template (like kubectl rollout restart d
 
 - **name** (string, required): Name of the DaemonSet to restart
 - **namespace** (stringoptional) (default: "default"): Namespace of the DaemonSet
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_list_hpa
 
@@ -2010,6 +2358,11 @@ List all HorizontalPodAutoscalers (like kubectl get hpa). Shows autoscalers that
 **Parameters:**
 
 - **namespace** (stringoptional): Namespace to filter (shows all if not specified)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
 
 ### k8s_get_hpa
 
@@ -2019,6 +2372,9 @@ Get detailed information about a HorizontalPodAutoscaler (like kubectl describe 
 
 - **name** (string, required): Name of the HPA
 - **namespace** (stringoptional) (default: "default"): Namespace of the HPA
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_delete_hpa
 
@@ -2028,6 +2384,10 @@ Delete a HorizontalPodAutoscaler (like kubectl delete hpa). The target deploymen
 
 - **name** (string, required): Name of the HPA to delete
 - **namespace** (stringoptional) (default: "default"): Namespace of the HPA
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview deletion without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
+- **gracePeriodSeconds** (numberoptional): The duration in seconds before the object should be deleted. 0 indicates delete immediately (like kubectl --now).
+- **propagationPolicy** (stringoptional) (default: "Background") [enum: Background, Foreground, Orphan]: Whether and how garbage collection will be performed: 'Background', 'Foreground', or 'Orphan' (maps to kubectl --cascade).
+- **ignoreNotFound** (booleanoptional) (default: false): Treat 'resource not found' (404) as a successful deletion (like kubectl delete --ignore-not-found).
 
 ### k8s_create_pdb
 
@@ -2040,6 +2400,7 @@ Create a PodDisruptionBudget to ensure high availability (like kubectl create pd
 - **selector** (object, required): Label selector to match pods (e.g., {app: 'nginx'})
 - **minAvailable** (string,numberoptional): Minimum number of pods that must be available (can be number or percentage, e.g., '50%')
 - **maxUnavailable** (string,numberoptional): Maximum number of pods that can be unavailable (can be number or percentage, e.g., '1')
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_statefulset
 
@@ -2059,6 +2420,7 @@ Create a StatefulSet (like kubectl create statefulset). StatefulSets are used fo
   Items: string
 - **env** (arrayoptional): Environment variables (KEY=VALUE format)
   Items: string
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_create_daemonset
 
@@ -2077,6 +2439,7 @@ Create a DaemonSet (like kubectl create daemonset). DaemonSets run a pod on ever
 - **nodeSelector** (objectoptional): Node selector labels (e.g., {app: 'monitoring'})
 - **hostNetwork** (booleanoptional) (default: false): Use host network namespace
 - **hostPID** (booleanoptional) (default: false): Use host PID namespace
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ## Multi-Cluster Tools
 
@@ -2351,6 +2714,7 @@ Patch a resource with JSON or merge patch (like kubectl patch)
 - **patch** (string, required): JSON patch content (object or JSON string)
 - **patchType** (stringoptional) (default: "strategic") [enum: strategic, merge, json]: Patch type
 - **subresource** (stringoptional): Subresource to patch (e.g., 'scale', 'status')
+- **dryRun** (stringoptional) (default: "none") [enum: none, client, server]: Must be 'none', 'client', or 'server'. If 'client', validate input and preview creation without sending request to cluster. If 'server', submit a dry-run request to the Kubernetes API server.
 
 ### k8s_delete
 
@@ -2390,7 +2754,14 @@ Get resources using Go template syntax (like kubectl -o go-template). Supports G
 
 List Custom Resource Definitions (CRDs) in the cluster
 
-**Parameters:** None
+**Parameters:**
+
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_get_custom_resource
 
@@ -2403,6 +2774,9 @@ Get a specific custom resource by its API group, version, kind, namespace and na
 - **plural** (string, required): Plural name of the resource (e.g., servicemonitors, prometheusrules)
 - **namespace** (string, required): Namespace of the resource
 - **name** (string, required): Name of the resource
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured object), 'yaml' (YAML formatted string), or 'name' (concise resource identifier)
+- **subpath** (stringoptional): Extract a specific field or sub-tree (e.g., 'status.podIP', 'spec.nodeName', '.metadata.labels', 'spec.containers[0].image')
+- **ignoreNotFound** (booleanoptional) (default: false): If true, returns { found: false } instead of throwing an error when the resource does not exist (like kubectl --ignore-not-found)
 
 ### k8s_list_custom_resources
 
@@ -2414,6 +2788,12 @@ List custom resources by their API group, version, and plural name
 - **version** (string, required): API version (e.g., v1)
 - **plural** (string, required): Plural name of the resource (e.g., servicemonitors, prometheusrules)
 - **namespace** (stringoptional): Namespace (omit for cluster-scoped resources)
+- **labelSelector** (stringoptional): Label selector to filter resources (e.g. 'app=nginx', 'environment in (production,staging)')
+- **fieldSelector** (stringoptional): Field selector to filter resources (e.g. 'status.phase=Running', 'spec.nodeName=node-1')
+- **sortBy** (stringoptional): Field to sort by. Supports shorthand aliases (e.g., 'creationTimestamp', 'age', 'name', 'namespace', 'status', 'restarts', 'replicas') or dot/bracket path notation (e.g., '.metadata.creationTimestamp', 'metadata.labels.app')
+- **descending** (booleanoptional) (default: false): Sort in descending order (e.g., newest first for creationTimestamp, highest first for restarts). Default: false
+- **limit** (numberoptional): Maximum number of items to return after sorting and filtering (prevents context window overflow)
+- **output** (stringoptional) (default: "json") [enum: json, yaml, name]: Output format: 'json' (default structured list), 'yaml' (YAML formatted text), or 'name' (resource names only)
 
 ### k8s_wait
 

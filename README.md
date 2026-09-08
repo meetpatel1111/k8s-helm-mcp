@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" width="300" alt="k8s-helm-mcp v0.28.0 logo">
+  <img src="assets/logo.png" width="300" alt="k8s-helm-mcp v0.29.0 logo">
 </p>
 
 # k8s-helm-mcp
@@ -23,7 +23,7 @@
 [![Works with Codex](https://img.shields.io/badge/Works_with-Codex-black?logo=openai)](https://openai.com/)
 [![Works with Codex CLI](https://img.shields.io/badge/Works_with-Codex_CLI-black?logo=openai)](https://openai.com/)
 
-Production-grade Kubernetes MCP (Model Context Protocol) Server v0.28.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
+Production-grade Kubernetes MCP (Model Context Protocol) Server v0.29.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Native Pre-Flight Simulation & Dry-Run Engine (`dryRun: none | client | server`), Universal Query Helper & Pagination (`limit`, `continue`, `sortBy`, `outputFormat`), Universal Deletion Safety (`propagationPolicy`, `gracePeriodSeconds`, `ignoreNotFound`), Kubernetes v1.37 Alignment, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
 
 > [!TIP]
 > **Status:** This package works brilliantly with **Claude Desktop**, **Claude Code**, **Gemini CLI**, **Codex**, **Codex CLI**, **Windsurf**, **Antigravity**, **Cursor**, and **GitHub Copilot**! For most clients, you can add it using `npx -y k8s-helm-mcp`.
@@ -33,7 +33,7 @@ Production-grade Kubernetes MCP (Model Context Protocol) Server v0.28.0 - Comple
 
 ## Overview
 
-This MCP server provides comprehensive Kubernetes cluster management capabilities, exposing kubectl/kubelet/API server functionality through the Model Context Protocol. It enables AI assistants and MCP clients to interact with Kubernetes clusters programmatically.
+This MCP server provides comprehensive Kubernetes cluster management capabilities, exposing kubectl/kubelet/API server functionality through the Model Context Protocol. It enables AI assistants and MCP clients to interact with Kubernetes clusters programmatically with enterprise safety guarantees.
 
 ## Features
 
@@ -41,15 +41,17 @@ This MCP server provides comprehensive Kubernetes cluster management capabilitie
 
 | Category | Tools |
 |----------|-------|
-| **Cluster & Context** | List contexts, switch context, cluster version, component status, cluster health, API latency check |
-| **Node Management** | List nodes, node details, cordon/uncordon, drain, taints, labels, pressure status, debug |
-| **Pod Management** | List pods, pod details, logs, stream logs, search logs, exec, attach, delete, debug, scheduling analysis, failure analysis |
-| **Workloads** | Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, scaling, rolling restart, rollout management, autoscaling |
-| **Networking** | Services, endpoints, ingresses, network policies, DNS test, service topology |
-| **Storage** | PersistentVolumes, PVCs, StorageClasses, unbound PVC detection, storage summary |
+| **Cluster & Context** | List contexts, switch context, cluster version (k8s v1.37 aligned), component status, cluster health, API latency check |
+| **Node Management** | List nodes, node details, cordon/uncordon, drain, taints, labels, pressure status, debug (all mutation tools with `dryRun` pre-flight simulation) |
+| **Pod Management** | List pods (with pagination & sorting), pod details, logs, stream logs, search logs, exec, attach, delete (with deletion safety), debug, scheduling analysis, failure analysis |
+| **Workloads** | Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs, CronJobs, scaling, rolling restart, rollout management, autoscaling (with mutation `dryRun`) |
+| **Networking** | Services, endpoints, ingresses, network policies, DNS test, service topology (all with pagination, sorting & dry-run safety) |
+| **Storage** | PersistentVolumes, PVCs, StorageClasses, unbound PVC detection, storage summary (with deletion safety) |
 | **Security & RBAC** | ServiceAccounts, Roles, ClusterRoles, RoleBindings, ClusterRoleBindings, Secrets, ConfigMaps, privileged pod detection, certificates, **Secret Scrubbing** (PII/credential redaction) |
 | **Monitoring** | Events, resource quotas, limit ranges, crash loop detection, pod/node metrics, health score, optimization suggestions |
 | **SRE** | Incident snapshot, changes-since triage, blast radius simulation, workload diff (drift detection), silent killers (preventive audit) |
+| **Safety & Dry-Run** | **Native Pre-Flight Simulation** (`client` & `server` dry-run) on all 20+ delete tools, 22 create tools, and operational mutation tools; deletion grace periods, propagation policies, and idempotent `ignoreNotFound` |
+| **Query & Pagination** | **Universal Query Engine** across all GET/LIST tools (`limit`, `continue`, `sortBy`, `sortOrder`, `outputFormat: json \| yaml`, `subresource`) |
 | **Configuration** | Apply manifests, export YAML, validate manifests, namespace management, patch, edit, diff, wait, watch |
 | **Advanced** | Raw API queries, pod failure analysis, bulk operations, orphaned resource detection, resource age reports |
 | **Helm** | 40+ tools for releases, charts, repos, plugins, registry (install, upgrade, rollback, lint, template, search) |
@@ -776,15 +778,19 @@ For a complete list of all 269 tools and their kubectl equivalents, see **[TOOLS
 
 **Total: 269 tools** (some tools are registered in multiple categories; unique count is 269)
 
-### Infrastructure Protection
+### Infrastructure Protection & Native Pre-Flight Simulation
 
-Destructive tools are blocked by default. Use `k8s_toggle_protection_mode` to enable:
+Destructive tools are blocked by default via Protection Modes. Use `k8s_toggle_protection_mode` or `k8s_toggle_all_protection_modes` to enable:
 - Delete operations
-- Node modifications (drain, cordon)
-- Resource modifications (patch, label)
-- Scaling operations
+- Node modifications (drain, cordon, taints, labels)
+- Workload modifications (scaling, rollouts, image updates, pod restarts)
+- Resource modifications (patch, label, annotate)
 
-See [TOOLS_REFERENCE.md](TOOLS_REFERENCE.md) for full kubectl → MCP tool mapping.
+Additionally, all modification, creation, and deletion tools now support **Native Pre-Flight Dry-Run Simulation** (`dryRun: 'none' | 'client' | 'server'`). AI assistants can safely simulate actions:
+- `client`: Performs client-side schema, parameter, and safety validation without making any changes.
+- `server`: Validates mutations directly against the live Kubernetes API server admission webhooks and RBAC policies without committing state.
+
+See [TOOLS_REFERENCE.md](TOOLS_REFERENCE.md) for full kubectl → MCP tool mapping and [SECURITY.md](SECURITY.md) for comprehensive safety architecture.
 
 ## Claude Desktop Integration
 
@@ -1081,6 +1087,74 @@ k8s_export_resource kind=ConfigMap name=my-config scrub=true
 - Credit cards, SSN, email addresses, IP addresses
 
 See [SECURITY.md](SECURITY.md) for detailed documentation.
+
+### Universal Query Helper & Pagination
+
+All Kubernetes GET and LIST tools feature standardized querying, pagination, and multi-format output capabilities:
+
+- **Pagination**: Supports `limit` (max records per page) and opaque `continue` tokens for seamless pagination through large clusters.
+- **Sorting**: Supports `sortBy` (JSONPath or field name, e.g. `metadata.name`, `status.phase`, `metadata.creationTimestamp`) and `sortOrder` (`asc` or `desc`).
+- **Format Flexibility**: Supports `outputFormat` (`json` or `yaml`), letting you receive raw structured JSON or clean, human/LLM-optimized YAML representations.
+- **Subresource Queries**: Supports `subresource` targeting (e.g. `status`, `scale`, `log`) on supported resources.
+
+**Example usage:**
+```bash
+# List top 10 pods sorted by creation timestamp descending
+k8s_list_pods namespace=default limit=10 sortBy=metadata.creationTimestamp sortOrder=desc
+
+# Fetch next page using continue token
+k8s_list_pods namespace=default limit=10 continue="<continue-token>"
+
+# Export deployment in clean YAML format
+k8s_get_deployment name=frontend namespace=production outputFormat=yaml
+```
+
+### Native Pre-Flight Simulation & Dry-Run Engine
+
+To ensure maximum safety for autonomous AI agents and SRE teams, all resource creation, deletion, and operational mutation tools natively support pre-flight dry-run execution:
+
+| Mode | Behavior | Safety Guarantee |
+|------|----------|------------------|
+| `none` (default) | Normal execution | Persists changes directly to the Kubernetes cluster |
+| `client` | Client-side simulation | Validates schemas, input parameters, and protection settings locally without modifying the cluster |
+| `server` | Kubernetes API dry-run | Validates request against live admission webhooks, mutating/validating controllers, and RBAC via Kubernetes API server (`dryRun=All`) without persisting changes |
+
+**Supported Mutation Categories:**
+- **Imperative Resource Creation**: All 22 `k8s_create_*` tools (deployments, services, namespaces, ingress, PVC, etc.)
+- **Node Operations**: `k8s_cordon_node`, `k8s_uncordon_node`, `k8s_drain_node`, `k8s_add_node_taint`, `k8s_remove_node_taint`, `k8s_add_node_label`, `k8s_remove_node_label`
+- **Pod Operations**: `k8s_restart_pod`
+- **Workload Modifications**: `k8s_scale_deployment`, `k8s_restart_deployment`, `k8s_rollback_deployment`, `k8s_rollout_undo`, `k8s_set_image`, `k8s_scale`, `k8s_rollout_pause`, `k8s_rollout_resume`, `k8s_restart_statefulset`, `k8s_restart_daemonset`, `k8s_autoscale`, `k8s_trigger_job`, `k8s_expose`, `k8s_label`, `k8s_annotate`
+- **Generic Modifications**: `k8s_patch`, `k8s_label`, `k8s_annotate`
+
+**Example usage:**
+```bash
+# Safely simulate cordoning a critical node with server-side validation
+k8s_cordon_node name=node-prod-01 dryRun=server
+
+# Simulate scaling a production deployment to verify RBAC and controller admission
+k8s_scale_deployment name=api-gateway replicas=10 namespace=prod dryRun=server
+```
+
+### Universal Deletion Safety Engine
+
+All 20+ resource deletion tools (`k8s_delete_pod`, `k8s_delete_deployment`, `k8s_delete_service`, `k8s_delete_pvc`, `k8s_delete_namespace`, `k8s_delete`, etc.) include comprehensive safety and cascade controls:
+
+- **`dryRun`** (`none`, `client`, `server`): Test deletions before destroying workloads or data.
+- **`gracePeriodSeconds`**: Override default termination countdowns (e.g., immediate deletion with `0` or extended grace periods for stateful workloads).
+- **`propagationPolicy`** (`Orphan`, `Background`, `Foreground`): Control whether dependent child resources (e.g., Pods owned by a ReplicaSet) are orphaned or cleaned up in foreground/background.
+- **`ignoreNotFound`** (`boolean`): Eliminates script and agent errors when cleaning up resources that may already have been deleted.
+
+**Example usage:**
+```bash
+# Pre-flight check deleting a namespace and its contents
+k8s_delete_namespace name=staging dryRun=server
+
+# Delete a deployment with foreground cascade and custom grace period
+k8s_delete_deployment name=old-app namespace=default propagationPolicy=Foreground gracePeriodSeconds=60
+
+# Idempotently clean up a pod without erroring if already removed
+k8s_delete_pod name=batch-worker-42 namespace=jobs ignoreNotFound=true
+```
 
 ## Architecture
 

@@ -4,6 +4,20 @@ import * as k8s from "@kubernetes/client-node";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName } from "../validators.js";
 import { scrubSensitiveData } from "../utils/secret-scrubber.js";
+import { commonListQuerySchema, commonGetQuerySchema, applySortAndLimit, applyGetFormatting, isNotFoundError } from "../utils/query-helper.js";
+import {
+  commonDeleteQuerySchema,
+  commonCreateQuerySchema,
+  commonMutationQuerySchema,
+  isClientDryRun,
+  isServerDryRun,
+  formatClientDryRunDelete,
+  formatClientDryRunCreate,
+  formatClientDryRunMutation,
+  handleDeleteError,
+  buildServerDeleteParams,
+  buildServerCreateParams,
+} from "../utils/safety-helper.js";
 
 export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -18,20 +32,41 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const sas = await k8sClient.listServiceAccounts(namespace);
+          const sas = await k8sClient.listServiceAccounts(namespace, { labelSelector, fieldSelector });
+          const mapped = sas.map((sa: k8s.V1ServiceAccount) => ({
+            name: sa.metadata?.name,
+            namespace: sa.metadata?.namespace,
+            secrets: sa.secrets?.map((s: k8s.V1ObjectReference) => s.name),
+            automountServiceAccountToken: sa.automountServiceAccountToken,
+            labels: sa.metadata?.labels,
+            age: sa.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            serviceAccounts: sas.map((sa: k8s.V1ServiceAccount) => ({
-              name: sa.metadata?.name,
-              namespace: sa.metadata?.namespace,
-              secrets: sa.secrets?.map((s: k8s.V1ObjectReference) => s.name),
-              automountServiceAccountToken: sa.automountServiceAccountToken,
-              age: sa.metadata?.creationTimestamp,
-            })),
+            serviceAccounts: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_serviceaccounts", namespace };
@@ -56,24 +91,45 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const roles = await k8sClient.listRoles(namespace);
-          return {
-            roles: roles.map((r: k8s.V1Role) => ({
-              name: r.metadata?.name,
-              namespace: r.metadata?.namespace,
-              rules: r.rules?.map((rule: k8s.V1PolicyRule) => ({
-                verbs: rule.verbs,
-                apiGroups: rule.apiGroups,
-                resources: rule.resources,
-                resourceNames: rule.resourceNames,
-              })),
-              age: r.metadata?.creationTimestamp,
+          const roles = await k8sClient.listRoles(namespace, { labelSelector, fieldSelector });
+          const mapped = roles.map((r: k8s.V1Role) => ({
+            name: r.metadata?.name,
+            namespace: r.metadata?.namespace,
+            rules: r.rules?.map((rule: k8s.V1PolicyRule) => ({
+              verbs: rule.verbs,
+              apiGroups: rule.apiGroups,
+              resources: rule.resources,
+              resourceNames: rule.resourceNames,
             })),
+            labels: r.metadata?.labels,
+            age: r.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            roles: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_roles", namespace };
@@ -93,24 +149,44 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
         description: "List all ClusterRoles",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({ labelSelector, fieldSelector, sortBy, descending, limit }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
-          const roles = await k8sClient.listClusterRoles();
-          return {
-            clusterRoles: roles.map((r: k8s.V1ClusterRole) => ({
-              name: r.metadata?.name,
-              rules: r.rules?.map((rule: k8s.V1PolicyRule) => ({
-                verbs: rule.verbs,
-                apiGroups: rule.apiGroups,
-                resources: rule.resources,
-                resourceNames: rule.resourceNames,
-              })),
-              aggregationRule: r.aggregationRule,
-              age: r.metadata?.creationTimestamp,
+          const roles = await k8sClient.listClusterRoles({ labelSelector, fieldSelector });
+          const mapped = roles.map((r: k8s.V1ClusterRole) => ({
+            name: r.metadata?.name,
+            rules: r.rules?.map((rule: k8s.V1PolicyRule) => ({
+              verbs: rule.verbs,
+              apiGroups: rule.apiGroups,
+              resources: rule.resources,
+              resourceNames: rule.resourceNames,
             })),
+            aggregationRule: r.aggregationRule,
+            labels: r.metadata?.labels,
+            age: r.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            clusterRoles: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_clusterroles" };
@@ -135,31 +211,48 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const rbacApi = k8sClient.getRbacV1Api();
-          const response = namespace
-            ? await rbacApi.listNamespacedRoleBinding({ namespace })
-            : await rbacApi.listRoleBindingForAllNamespaces({});
-          
-          return {
-            roleBindings: response.items.map((rb: k8s.V1RoleBinding) => ({
-              name: rb.metadata?.name,
-              namespace: rb.metadata?.namespace,
-              roleRef: {
-                kind: rb.roleRef?.kind,
-                name: rb.roleRef?.name,
-              },
-              subjects: rb.subjects?.map((s: k8s.RbacV1Subject) => ({
-                kind: s.kind,
-                name: s.name,
-                namespace: s.namespace,
-              })),
-              age: rb.metadata?.creationTimestamp,
+          const items = await k8sClient.listRoleBindings(namespace, { labelSelector, fieldSelector });
+          const mapped = items.map((rb: k8s.V1RoleBinding) => ({
+            name: rb.metadata?.name,
+            namespace: rb.metadata?.namespace,
+            roleRef: {
+              kind: rb.roleRef?.kind,
+              name: rb.roleRef?.name,
+            },
+            subjects: rb.subjects?.map((s: k8s.RbacV1Subject) => ({
+              kind: s.kind,
+              name: s.name,
+              namespace: s.namespace,
             })),
+            labels: rb.metadata?.labels,
+            age: rb.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            roleBindings: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_rolebindings", namespace };
@@ -179,28 +272,46 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
         description: "List all ClusterRoleBindings",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({ labelSelector, fieldSelector, sortBy, descending, limit }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
-          const rbacApi = k8sClient.getRbacV1Api();
-          const response = await rbacApi.listClusterRoleBinding({});
-          
-          return {
-            clusterRoleBindings: response.items.map((crb: k8s.V1ClusterRoleBinding) => ({
-              name: crb.metadata?.name,
-              roleRef: {
-                kind: crb.roleRef?.kind,
-                name: crb.roleRef?.name,
-              },
-              subjects: crb.subjects?.map((s: k8s.RbacV1Subject) => ({
-                kind: s.kind,
-                name: s.name,
-                namespace: s.namespace,
-              })),
-              age: crb.metadata?.creationTimestamp,
+          const items = await k8sClient.listClusterRoleBindings({ labelSelector, fieldSelector });
+          const mapped = items.map((crb: k8s.V1ClusterRoleBinding) => ({
+            name: crb.metadata?.name,
+            roleRef: {
+              kind: crb.roleRef?.kind,
+              name: crb.roleRef?.name,
+            },
+            subjects: crb.subjects?.map((s: k8s.RbacV1Subject) => ({
+              kind: s.kind,
+              name: s.name,
+              namespace: s.namespace,
             })),
+            labels: crb.metadata?.labels,
+            age: crb.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            clusterRoleBindings: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_clusterrolebindings" };
@@ -229,30 +340,51 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Filter by secret type (e.g., kubernetes.io/tls, Opaque)",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace, type }: { namespace?: string; type?: string }) => {
+      handler: async ({ namespace, type, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        type?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const secrets = await k8sClient.listSecrets(namespace);
+          const secrets = await k8sClient.listSecrets(namespace, { labelSelector, fieldSelector });
           
           const filtered = type ? secrets.filter((s: k8s.V1Secret) => s.type === type) : secrets;
           
+          const mapped = filtered.map((s: k8s.V1Secret) => ({
+            name: s.metadata?.name,
+            namespace: s.metadata?.namespace,
+            type: s.type,
+            dataKeys: Object.keys(s.data || {}),
+            dataSize: Object.values(s.data || {}).reduce((sum: number, v: any) => sum + (v?.length || 0), 0),
+            immutable: s.immutable,
+            labels: s.metadata?.labels,
+            age: s.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            secrets: filtered.map((s: k8s.V1Secret) => ({
-              name: s.metadata?.name,
-              namespace: s.metadata?.namespace,
-              type: s.type,
-              dataKeys: Object.keys(s.data || {}),
-              dataSize: Object.values(s.data || {}).reduce((sum: number, v: any) => sum + (v?.length || 0), 0),
-              immutable: s.immutable,
-              age: s.metadata?.creationTimestamp,
-            })),
-            total: filtered.length,
+            secrets: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
             byType: filtered.reduce((acc: Record<string, number>, s: k8s.V1Secret) => {
               acc[s.type || "Opaque"] = (acc[s.type || "Opaque"] || 0) + 1;
               return acc;
             }, {}),
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_secrets", namespace };
@@ -277,21 +409,42 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const cms = await k8sClient.listConfigMaps(namespace);
+          const cms = await k8sClient.listConfigMaps(namespace, { labelSelector, fieldSelector });
+          const mapped = cms.map((cm: k8s.V1ConfigMap) => ({
+            name: cm.metadata?.name,
+            namespace: cm.metadata?.namespace,
+            dataKeys: Object.keys(cm.data || {}),
+            binaryDataKeys: Object.keys(cm.binaryData || {}),
+            immutable: cm.immutable,
+            labels: cm.metadata?.labels,
+            age: cm.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            configMaps: cms.map((cm: k8s.V1ConfigMap) => ({
-              name: cm.metadata?.name,
-              namespace: cm.metadata?.namespace,
-              dataKeys: Object.keys(cm.data || {}),
-              binaryDataKeys: Object.keys(cm.binaryData || {}),
-              immutable: cm.immutable,
-              age: cm.metadata?.creationTimestamp,
-            })),
+            configMaps: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_configmaps", namespace };
@@ -327,11 +480,26 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Decode base64 values (use with caution)",
               default: false,
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, decode }: { name: string; namespace?: string; decode?: boolean }) => {
+      handler: async ({
+        name,
+        namespace,
+        decode,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        decode?: boolean;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "secret");
           const coreApi = k8sClient.getCoreV1Api();
@@ -344,7 +512,7 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               )
             : Object.fromEntries(Object.keys(data).map((k) => [k, "***MASKED***"]));
 
-          return {
+          const rawResult = {
             name: secret.metadata?.name,
             namespace: secret.metadata?.namespace,
             type: secret.type,
@@ -355,7 +523,23 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             age: secret.metadata?.creationTimestamp,
             warning: decode ? "Decoded values exposed - handle with care" : undefined,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Secret",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Secret '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_secret", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -384,17 +568,30 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the ServiceAccount",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "serviceaccount");
           const coreApi = k8sClient.getCoreV1Api();
           const sa = await coreApi.readNamespacedServiceAccount({ name, namespace: namespace || "default" });
 
-          return {
+          const rawResult = {
             name: sa.metadata?.name,
             namespace: sa.metadata?.namespace,
             automountServiceAccountToken: sa.automountServiceAccountToken,
@@ -408,7 +605,23 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             labels: sa.metadata?.labels,
             age: sa.metadata?.creationTimestamp,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "ServiceAccount",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `ServiceAccount '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_serviceaccount", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -437,17 +650,30 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the Role",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "role");
           const rbacApi = k8sClient.getRbacV1Api();
           const role = await rbacApi.readNamespacedRole({ name, namespace: namespace || "default" });
 
-          return {
+          const rawResult = {
             name: role.metadata?.name,
             namespace: role.metadata?.namespace,
             rules: role.rules?.map((rule: k8s.V1PolicyRule) => ({
@@ -461,7 +687,23 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             labels: role.metadata?.labels,
             age: role.metadata?.creationTimestamp,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Role",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Role '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_role", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -485,17 +727,28 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Name of the ClusterRole",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name }: { name: string }) => {
+      handler: async ({
+        name,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "clusterrole");
           const rbacApi = k8sClient.getRbacV1Api();
           const cr = await rbacApi.readClusterRole({ name });
 
-          return {
+          const rawResult = {
             name: cr.metadata?.name,
             rules: cr.rules?.map((rule: k8s.V1PolicyRule) => ({
               verbs: rule.verbs,
@@ -509,7 +762,21 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             labels: cr.metadata?.labels,
             age: cr.metadata?.creationTimestamp,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "ClusterRole",
+            name,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              message: `ClusterRole '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_clusterrole", resource: name };
           const classified = classifyError(error, context);
           return {
@@ -538,17 +805,30 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the RoleBinding",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "rolebinding");
           const rbacApi = k8sClient.getRbacV1Api();
           const rb = await rbacApi.readNamespacedRoleBinding({ name, namespace: namespace || "default" });
 
-          return {
+          const rawResult = {
             name: rb.metadata?.name,
             namespace: rb.metadata?.namespace,
             roleRef: {
@@ -566,7 +846,23 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             labels: rb.metadata?.labels,
             age: rb.metadata?.creationTimestamp,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "RoleBinding",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `RoleBinding '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_rolebinding", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -590,17 +886,28 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Name of the ClusterRoleBinding",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name }: { name: string }) => {
+      handler: async ({
+        name,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "clusterrolebinding");
           const rbacApi = k8sClient.getRbacV1Api();
           const crb = await rbacApi.readClusterRoleBinding({ name });
 
-          return {
+          const rawResult = {
             name: crb.metadata?.name,
             roleRef: {
               kind: crb.roleRef?.kind,
@@ -617,7 +924,21 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             labels: crb.metadata?.labels,
             age: crb.metadata?.creationTimestamp,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "ClusterRoleBinding",
+            name,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              message: `ClusterRoleBinding '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_clusterrolebinding", resource: name };
           const classified = classifyError(error, context);
           return {
@@ -650,30 +971,73 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Mask potential secrets in ConfigMap data",
               default: false,
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, scrub }: { name: string; namespace?: string; scrub?: boolean }) => {
-        const coreApi = k8sClient.getCoreV1Api();
-        const cm = await coreApi.readNamespacedConfigMap({ name, namespace: namespace || "default" });
-        
-        let data = cm.data;
-        if (scrub && data) {
-          data = Object.fromEntries(
-            Object.entries(data).map(([k, v]) => [k, scrubSensitiveData(v || "")])
-          );
+      handler: async ({
+        name,
+        namespace,
+        scrub,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        scrub?: boolean;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        try {
+          validateResourceName(name, "configmap");
+          const coreApi = k8sClient.getCoreV1Api();
+          const cm = await coreApi.readNamespacedConfigMap({ name, namespace: namespace || "default" });
+
+          let data = cm.data;
+          if (scrub && data) {
+            data = Object.fromEntries(
+              Object.entries(data).map(([k, v]) => [k, scrubSensitiveData(v || "")])
+            );
+          }
+
+          const rawResult = {
+            name: cm.metadata?.name,
+            namespace: cm.metadata?.namespace,
+            data,
+            scrubbed: scrub || false,
+            binaryData: cm.binaryData ? "<binary data present>" : null,
+            immutable: cm.immutable,
+            age: cm.metadata?.creationTimestamp,
+          };
+
+          return applyGetFormatting(rawResult, {
+            kind: "ConfigMap",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
+        } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `ConfigMap '${name}' not found`,
+            };
+          }
+          const context: ErrorContext = { operation: "k8s_get_configmap", resource: name, namespace };
+          const classified = classifyError(error, context);
+          return {
+            success: false,
+            error: classified.message,
+            type: classified.type,
+            suggestions: classified.suggestions,
+          };
         }
-        
-        return {
-          name: cm.metadata?.name,
-          namespace: cm.metadata?.namespace,
-          data,
-          scrubbed: scrub || false,
-          binaryData: cm.binaryData ? "<binary data present>" : null,
-          immutable: cm.immutable,
-          age: cm.metadata?.creationTimestamp,
-        };
       },
     },
     {
@@ -805,37 +1169,53 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the ServiceAccount",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "serviceaccount");
-          const coreApi = k8sClient.getCoreV1Api();
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "ServiceAccount",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await coreApi.deleteNamespacedServiceAccount({ name, namespace: ns });
+
+          const coreApi = k8sClient.getCoreV1Api();
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await coreApi.deleteNamespacedServiceAccount({ name, namespace: ns, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ServiceAccount ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_serviceaccount", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "ServiceAccount", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_serviceaccount", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -863,37 +1243,53 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the Role",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "role");
-          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Role",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await rbacApi.deleteNamespacedRole({ name, namespace: ns });
+
+          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await rbacApi.deleteNamespacedRole({ name, namespace: ns, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Role ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_role", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "Role", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_role", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -916,34 +1312,48 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Name of the ClusterRole to delete",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
         try {
           validateResourceName(name, "clusterrole");
-          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "ClusterRole",
+              name,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await rbacApi.deleteClusterRole({ name });
+
+          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await rbacApi.deleteClusterRole({ name, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ClusterRole ${name} deleted`,
           };
         } catch (error) {
+          const handled = handleDeleteError(error, { kind: "ClusterRole", name, ignoreNotFound });
+          if (handled) return handled;
           const context: ErrorContext = { operation: "k8s_delete_clusterrole", resource: name };
           const classified = classifyError(error, context);
           return {
@@ -972,37 +1382,53 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the RoleBinding",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "rolebinding");
-          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "RoleBinding",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await rbacApi.deleteNamespacedRoleBinding({ name, namespace: ns });
+
+          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await rbacApi.deleteNamespacedRoleBinding({ name, namespace: ns, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `RoleBinding ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_rolebinding", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "RoleBinding", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_rolebinding", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -1025,34 +1451,48 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Name of the ClusterRoleBinding to delete",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
         try {
           validateResourceName(name, "clusterrolebinding");
-          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "ClusterRoleBinding",
+              name,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await rbacApi.deleteClusterRoleBinding({ name });
+
+          const rbacApi = (k8sClient as any).kc.makeApiClient(k8s.RbacAuthorizationV1Api);
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await rbacApi.deleteClusterRoleBinding({ name, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ClusterRoleBinding ${name} deleted`,
           };
         } catch (error) {
+          const handled = handleDeleteError(error, { kind: "ClusterRoleBinding", name, ignoreNotFound });
+          if (handled) return handled;
           const context: ErrorContext = { operation: "k8s_delete_clusterrolebinding", resource: name };
           const classified = classifyError(error, context);
           return {
@@ -1094,16 +1534,18 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "object",
               description: "Annotations to apply",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, automountToken, labels, annotations }: { 
+      handler: async ({ name, namespace, automountToken, labels, annotations, dryRun }: { 
         name: string; 
         namespace?: string;
         automountToken?: boolean;
         labels?: Record<string, string>;
         annotations?: Record<string, string>;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "serviceaccount");
@@ -1121,11 +1563,22 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
             },
             automountServiceAccountToken: automountToken !== false,
           };
-          
-          const result = await coreApi.createNamespacedServiceAccount({ namespace: ns, body: serviceAccount });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "ServiceAccount",
+              name,
+              namespace: ns,
+              manifest: serviceAccount,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedServiceAccount({ namespace: ns, body: serviceAccount, ...createParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ServiceAccount ${name} created in namespace ${ns}`,
             serviceAccount: {
               name: result.metadata?.name,
@@ -1183,16 +1636,18 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "object",
               description: "Annotations to apply",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "rules"],
         },
       },
-      handler: async ({ name, namespace, rules, labels, annotations }: { 
+      handler: async ({ name, namespace, rules, labels, annotations, dryRun }: { 
         name: string; 
         namespace?: string;
         rules: any[];
         labels?: Record<string, string>;
         annotations?: Record<string, string>;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "role");
@@ -1215,11 +1670,22 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               resourceNames: r.resourceNames,
             })),
           };
-          
-          const result = await rbacApi.createNamespacedRole({ namespace: ns, body: role });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Role",
+              name,
+              namespace: ns,
+              manifest: role,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await rbacApi.createNamespacedRole({ namespace: ns, body: role, ...createParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Role ${name} created in namespace ${ns}`,
             role: {
               name: result.metadata?.name,
@@ -1283,17 +1749,19 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "object",
               description: "Labels to apply",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "roleName", "subjects"],
         },
       },
-      handler: async ({ name, namespace, roleName, roleKind, subjects, labels }: { 
+      handler: async ({ name, namespace, roleName, roleKind, subjects, labels, dryRun }: { 
         name: string; 
         namespace?: string;
         roleName: string;
         roleKind?: string;
         subjects: any[];
         labels?: Record<string, string>;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "rolebinding");
@@ -1320,11 +1788,22 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               apiGroup: s.apiGroup || (s.kind === "ServiceAccount" ? "" : "rbac.authorization.k8s.io"),
             })),
           };
-          
-          const result = await rbacApi.createNamespacedRoleBinding({ namespace: ns, body: roleBinding });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "RoleBinding",
+              name,
+              namespace: ns,
+              manifest: roleBinding,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await rbacApi.createNamespacedRoleBinding({ namespace: ns, body: roleBinding, ...createParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `RoleBinding ${name} created in namespace ${ns}`,
             roleBinding: {
               name: result.metadata?.name,
@@ -1383,15 +1862,17 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "object",
               description: "Aggregation rule for combining cluster roles",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "rules"],
         },
       },
-      handler: async ({ name, rules, labels, annotations }: { 
+      handler: async ({ name, rules, labels, annotations, dryRun }: { 
         name: string; 
         rules: any[];
         labels?: Record<string, string>;
         annotations?: Record<string, string>;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "clusterrole");
@@ -1413,11 +1894,21 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               nonResourceURLs: r.nonResourceURLs,
             })),
           };
-          
-          const result = await rbacApi.createClusterRole({ body: clusterRole });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "ClusterRole",
+              name,
+              manifest: clusterRole,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await rbacApi.createClusterRole({ body: clusterRole, ...createParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ClusterRole ${name} created`,
             clusterRole: {
               name: result.metadata?.name,
@@ -1469,15 +1960,17 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "object",
               description: "Labels to apply",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "clusterRoleName", "subjects"],
         },
       },
-      handler: async ({ name, clusterRoleName, subjects, labels }: { 
+      handler: async ({ name, clusterRoleName, subjects, labels, dryRun }: { 
         name: string; 
         clusterRoleName: string;
         subjects: any[];
         labels?: Record<string, string>;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "clusterrolebinding");
@@ -1502,11 +1995,21 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               apiGroup: s.apiGroup || (s.kind === "ServiceAccount" ? "" : "rbac.authorization.k8s.io"),
             })),
           };
-          
-          const result = await rbacApi.createClusterRoleBinding({ body: clusterRoleBinding });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "ClusterRoleBinding",
+              name,
+              manifest: clusterRoleBinding,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await rbacApi.createClusterRoleBinding({ body: clusterRoleBinding, ...createParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ClusterRoleBinding ${name} created`,
             clusterRoleBinding: {
               name: result.metadata?.name,
@@ -1629,32 +2132,57 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
         description: "List Certificate Signing Requests (CSR)",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({ labelSelector, fieldSelector, sortBy, descending, limit }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           const rawClient = k8sClient as any;
-          const result = await rawClient.rawApiRequest("/apis/certificates.k8s.io/v1/certificatesigningrequests");
+          const queryParams = new URLSearchParams();
+          if (labelSelector) queryParams.set("labelSelector", labelSelector);
+          if (fieldSelector) queryParams.set("fieldSelector", fieldSelector);
+          const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
+          const result = await rawClient.rawApiRequest(`/apis/certificates.k8s.io/v1/certificatesigningrequests${qs}`);
           
           if (!result || !result.items) {
             return {
               csrs: [],
               total: 0,
+              returned: 0,
             };
           }
           
+          const mapped = result.items.map((csr: any) => ({
+            name: csr.metadata?.name,
+            signerName: csr.spec?.signerName,
+            username: csr.spec?.username,
+            usages: csr.spec?.usages,
+            status: csr.status?.conditions?.find((c: any) => c.type === "Approved") ? "Approved" : 
+                    csr.status?.conditions?.find((c: any) => c.type === "Denied") ? "Denied" : "Pending",
+            labels: csr.metadata?.labels,
+            age: csr.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            csrs: result.items.map((csr: any) => ({
-              name: csr.metadata?.name,
-              signerName: csr.spec?.signerName,
-              username: csr.spec?.username,
-              usages: csr.spec?.usages,
-              status: csr.status?.conditions?.find((c: any) => c.type === "Approved") ? "Approved" : 
-                      csr.status?.conditions?.find((c: any) => c.type === "Denied") ? "Denied" : "Pending",
-              age: csr.metadata?.creationTimestamp,
-            })),
-            total: result.items.length,
+            csrs: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_csr" };
@@ -1685,18 +2213,19 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Force approval even if already approved",
               default: false,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, force }: { name: string; force?: boolean }) => {
+      handler: async ({ name, force, dryRun }: { name: string; force?: boolean; dryRun?: string }) => {
         try {
           validateResourceName(name, "certificatesigningrequest");
           const rawClient = k8sClient as any;
-          
+
           // First, check current status
           const csr = await rawClient.rawApiRequest(`/apis/certificates.k8s.io/v1/certificatesigningrequests/${name}`);
-          
+
           const conditions = csr.status?.conditions || [];
           const alreadyApproved = conditions.some((c: any) => c.type === "Approved");
           const alreadyDenied = conditions.some((c: any) => c.type === "Denied");
@@ -1731,14 +2260,25 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               ],
             },
           };
-          
-          await rawClient.rawApiRequest(`/apis/certificates.k8s.io/v1/certificatesigningrequests/${name}/approval`, "PUT", {
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Approve CSR",
+              kind: "CertificateSigningRequest",
+              name,
+              patch: patch.status,
+            });
+          }
+
+          const approvePath = `/apis/certificates.k8s.io/v1/certificatesigningrequests/${name}/approval${isServerDryRun(dryRun) ? "?dryRun=All" : ""}`;
+          await rawClient.rawApiRequest(approvePath, "PUT", {
             ...csr,
             status: patch.status,
           });
-          
+
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `CertificateSigningRequest ${name} approved`,
           };
         } catch (error) {
@@ -1770,18 +2310,19 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Force denial even if already denied",
               default: false,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, force }: { name: string; force?: boolean }) => {
+      handler: async ({ name, force, dryRun }: { name: string; force?: boolean; dryRun?: string }) => {
         try {
           validateResourceName(name, "certificatesigningrequest");
           const rawClient = k8sClient as any;
-          
+
           // First, check current status
           const csr = await rawClient.rawApiRequest(`/apis/certificates.k8s.io/v1/certificatesigningrequests/${name}`);
-          
+
           const conditions = csr.status?.conditions || [];
           const alreadyDenied = conditions.some((c: any) => c.type === "Denied");
           const alreadyApproved = conditions.some((c: any) => c.type === "Approved");
@@ -1816,14 +2357,25 @@ export function registerSecurityTools(k8sClient: K8sClient): { tool: Tool; handl
               ],
             },
           };
-          
-          await rawClient.rawApiRequest(`/apis/certificates.k8s.io/v1/certificatesigningrequests/${name}/approval`, "PUT", {
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Deny CSR",
+              kind: "CertificateSigningRequest",
+              name,
+              patch: patch.status,
+            });
+          }
+
+          const denyPath = `/apis/certificates.k8s.io/v1/certificatesigningrequests/${name}/approval${isServerDryRun(dryRun) ? "?dryRun=All" : ""}`;
+          await rawClient.rawApiRequest(denyPath, "PUT", {
             ...csr,
             status: patch.status,
           });
-          
+
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `CertificateSigningRequest ${name} denied`,
           };
         } catch (error) {

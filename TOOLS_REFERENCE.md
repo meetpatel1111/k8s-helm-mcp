@@ -1,6 +1,6 @@
 # K8s MCP Server - Complete Tool Reference
 
-**Version: 0.28.0** | **Total Tools: 269**
+**Version: 0.29.0** | **Total Tools: 269**
 
 This document provides comprehensive reference for all tools in the Kubernetes MCP Server, including tool catalogs, kubectl mappings, and natural language patterns. This server is optimized for use with **Claude Desktop**, **Claude Code**, **Codex**, **Windsurf**, **Antigravity**, and **Cursor**.
 
@@ -9,10 +9,11 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 ## Table of Contents
 
 1. [Quick Reference](#quick-reference)
-2. [Complete Tool Catalog](#complete-tool-catalog)
-3. [kubectl to MCP Tool Mapping](#kubectl-to-mcp-tool-mapping)
-4. [Natural Language to Tool Mapping](#natural-language-to-tool-mapping)
-5. [Protection Mode Classifications](#protection-mode-classifications)
+2. [Universal Tool Parameters](#universal-tool-parameters)
+3. [Complete Tool Catalog](#complete-tool-catalog)
+4. [kubectl to MCP Tool Mapping](#kubectl-to-mcp-tool-mapping)
+5. [Natural Language to Tool Mapping](#natural-language-to-tool-mapping)
+6. [Protection Mode Classifications](#protection-mode-classifications)
 
 ---
 
@@ -37,6 +38,36 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 | Apply manifest | `k8s_apply_manifest` |
 | Get cluster health | `k8s_cluster_health` |
 | Check resource usage | `k8s_top_pod` / `k8s_top_node` |
+
+---
+
+## Universal Tool Parameters
+
+To maintain architectural consistency and safety across all 269 tools, standard parameter schemas are universally supported:
+
+### 1. Universal Query & Pagination (All GET & LIST Tools)
+Supported across all tools listing or inspecting pods, nodes, workloads, services, ingresses, storage, RBAC, events, and namespaces:
+- `limit?: number`: Maximum items to return per page (server-side pagination).
+- `continue?: string`: Pagination continuation token from a prior response.
+- `sortBy?: string`: Property path to sort results by (e.g. `metadata.name`, `status.phase`, `metadata.creationTimestamp`).
+- `sortOrder?: 'asc' | 'desc'`: Sort direction (defaults to `asc`).
+- `outputFormat?: 'json' | 'yaml'`: Output serialization (defaults to `json`; set to `yaml` for human/LLM-optimized YAML).
+- `subresource?: string`: Query specific subresource (e.g. `status`, `scale`) where supported.
+
+### 2. Universal Deletion Safety (All DELETE Tools)
+Supported across all 20+ resource deletion tools (`k8s_delete_*`):
+- `dryRun?: 'none' | 'client' | 'server'`: Pre-flight deletion simulation without altering cluster state. `server` mode validates deletion against live admission webhooks and RBAC on the Kubernetes API server; `client` mode performs local safety checks.
+- `gracePeriodSeconds?: number`: Eviction countdown before termination.
+- `propagationPolicy?: 'Orphan' | 'Background' | 'Foreground'`: Cascade garbage collection strategy.
+- `ignoreNotFound?: boolean`: Idempotent deletion flag (returns friendly status instead of error if resource is missing).
+
+### 3. Universal Creation Dry-Run (All CREATE Tools)
+Supported across all 22 imperative `k8s_create_*` tools:
+- `dryRun?: 'none' | 'client' | 'server'`: Pre-flight validation (`client` or `server`) before resource creation.
+
+### 4. Universal Operational Mutation Dry-Run (All MUTATION Tools)
+Supported across all operational workload, node, and generic modification tools:
+- `dryRun?: 'none' | 'client' | 'server'`: Pre-flight validation on cordon, uncordon, drain, taints, labels, scaling, rolling restarts, rollback undo, image updates, pause/resume, autoscaling, job triggering, expose, patch, label, and annotate.
 
 ---
 
@@ -80,15 +111,15 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `k8s_list_nodes` | List all nodes in the cluster with status and resource information | - |
-| `k8s_get_node` | Get detailed information about a specific node | `name` (required) |
-| `k8s_cordon_node` | Mark a node as unschedulable (cordon) | `name` |
-| `k8s_uncordon_node` | Mark a node as schedulable (uncordon) | `name` |
-| `k8s_drain_node` | Drain a node by cordoning and evicting all pods | `name`, `force?: boolean`, `gracePeriodSeconds?: number` |
-| `k8s_add_node_label` | Add or update a label on a node | `name`, `key`, `value` |
-| `k8s_remove_node_label` | Remove a label from a node | `name`, `key` |
-| `k8s_add_node_taint` | Add a taint to a node | `name`, `key`, `effect` (NoSchedule/PreferNoSchedule/NoExecute), `value?` |
-| `k8s_remove_node_taint` | Remove a taint from a node | `name`, `key`, `effect?` |
+| `k8s_list_nodes` | List all nodes in the cluster with status and resource information | `limit?`, `continue?`, `sortBy?`, `sortOrder?`, `outputFormat?` |
+| `k8s_get_node` | Get detailed information about a specific node | `name` (required), `subresource?`, `outputFormat?` |
+| `k8s_cordon_node` | Mark a node as unschedulable (cordon) | `name`, `dryRun?` |
+| `k8s_uncordon_node` | Mark a node as schedulable (uncordon) | `name`, `dryRun?` |
+| `k8s_drain_node` | Drain a node by cordoning and evicting all pods | `name`, `force?: boolean`, `gracePeriodSeconds?: number`, `dryRun?` |
+| `k8s_add_node_label` | Add or update a label on a node | `name`, `key`, `value`, `dryRun?` |
+| `k8s_remove_node_label` | Remove a label from a node | `name`, `key`, `dryRun?` |
+| `k8s_add_node_taint` | Add a taint to a node | `name`, `key`, `effect` (NoSchedule/PreferNoSchedule/NoExecute), `value?`, `dryRun?` |
+| `k8s_remove_node_taint` | Remove a taint from a node | `name`, `key`, `effect?`, `dryRun?` |
 | `k8s_debug_node` | Debug a node by creating a privileged debug pod on it | `node`, `image?`, `namespace?`, `command?` |
 | `k8s_node_pressure_status` | Check for node pressure conditions (Memory, Disk, PID) | `name?` |
 | `k8s_get_node_metrics` | Get node metrics (CPU/Memory) - requires metrics-server | `name?` |
@@ -98,9 +129,9 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `k8s_list_pods` | List pods in a namespace or across all namespaces | `namespace?`, `labelSelector?`, `fieldSelector?` |
-| `k8s_get_pod` | Get detailed information about a specific pod | `name` (required), `namespace?` |
-| `k8s_delete_pod` | Delete a pod | `name`, `namespace?`, `gracePeriodSeconds?`, `force?: boolean` |
+| `k8s_list_pods` | List pods in a namespace or across all namespaces | `namespace?`, `labelSelector?`, `fieldSelector?`, `limit?`, `continue?`, `sortBy?`, `sortOrder?`, `outputFormat?` |
+| `k8s_get_pod` | Get detailed information about a specific pod | `name` (required), `namespace?`, `subresource?`, `outputFormat?` |
+| `k8s_delete_pod` | Delete a pod | `name`, `namespace?`, `gracePeriodSeconds?`, `propagationPolicy?`, `ignoreNotFound?`, `dryRun?`, `force?: boolean` |
 | `k8s_get_pod_logs` | Get logs from pod, deployment, statefulset, daemonset, job, or service | `name?`, `namespace?`, `container?`, `tailLines?`, `follow?: boolean`, `previous?: boolean`, `since?`, `timestamps?: boolean` |
 | `k8s_stream_logs` | Stream pod logs in real-time (returns stream info) | `pod`, `namespace`, `container?`, `follow?: boolean`, `tailLines?` |
 | `k8s_pod_log_search` | Search for patterns in pod logs across multiple pods | `pattern`, `namespace?`, `labelSelector?`, `maxPods?`, `tailLines?` |
@@ -111,14 +142,14 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 | `k8s_get_pod_events` | Get events for a specific pod | `name` (required), `namespace?` |
 | `k8s_find_unhealthy_pods` | Find pods not in Running state or with issues | `namespace?` |
 | `k8s_find_crashloop_pods` | Find pods in CrashLoopBackOff state | `namespace?` |
-| `k8s_restart_pod` | Restart a pod by deleting it (will be recreated if part of controller) | `name`, `namespace?` |
+| `k8s_restart_pod` | Restart a pod by deleting it (will be recreated if part of controller) | `name`, `namespace?`, `dryRun?` |
 | `k8s_debug_pod` | Create ephemeral debug container in running pod | `name`, `namespace?`, `image?`, `command?`, `target?` |
 | `k8s_debug_scheduling` | Debug why a pod is stuck in Pending state | `name`, `namespace?` |
 | `k8s_analyze_pod_failure` | AI-style diagnosis of why a pod is failing | `name`, `namespace?` |
 | `k8s_get_pod_metrics` | Get pod metrics (CPU/Memory) - requires metrics-server | `name?`, `namespace?` |
 | `k8s_top_pod` | Display resource usage for pods | `name?`, `namespace?`, `allNamespaces?: boolean`, `containers?: boolean`, `sortBy?: "cpu" \| "memory"` |
 | `k8s_run` | Run a pod imperatively (like kubectl run) | `image` (required), `name?`, `namespace?`, `command?`, `args?`, `env?`, `port?`, `labels?`, `dryRun?` |
-| `k8s_bulk_delete_pods` | Delete multiple pods matching criteria | `namespace` (required), `labelSelector?`, `status?`, `dryRun?: boolean` |
+| `k8s_bulk_delete_pods` | Delete multiple pods matching criteria | `namespace` (required), `labelSelector?`, `status?`, `gracePeriodSeconds?`, `propagationPolicy?`, `ignoreNotFound?`, `dryRun?: boolean` |
 | `k8s_check_privileged_pods` | Find pods running with privileged security contexts | `namespace?` |
 
 ### Workload Management
@@ -127,14 +158,14 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `k8s_list_deployments` | List all deployments with status and replica info | `namespace?` |
-| `k8s_get_deployment` | Get detailed information about a deployment | `name` (required), `namespace?` |
-| `k8s_create_deployment` | Create a deployment imperatively | `name`, `image` (required), `namespace?`, `replicas?`, `port?`, `env?`, `labels?` |
-| `k8s_delete_deployment` | Delete a deployment | `name`, `namespace?`, `gracePeriodSeconds?`, `force?: boolean` |
-| `k8s_scale_deployment` | Scale a deployment to specific number of replicas | `name` (required), `replicas` (required), `namespace?` |
-| `k8s_restart_deployment` | Perform rolling restart of a deployment | `name`, `namespace?` |
-| `k8s_rollback_deployment` | Rollback deployment to previous revision | `name`, `namespace?`, `revision?` |
-| `k8s_set_image` | Update container image in a deployment | `deployment` (required), `image` (required), `container?`, `namespace?` |
+| `k8s_list_deployments` | List all deployments with status and replica info | `namespace?`, `limit?`, `continue?`, `sortBy?`, `sortOrder?`, `outputFormat?` |
+| `k8s_get_deployment` | Get detailed information about a deployment | `name` (required), `namespace?`, `subresource?`, `outputFormat?` |
+| `k8s_create_deployment` | Create a deployment imperatively | `name`, `image` (required), `namespace?`, `replicas?`, `port?`, `env?`, `labels?`, `dryRun?` |
+| `k8s_delete_deployment` | Delete a deployment | `name`, `namespace?`, `gracePeriodSeconds?`, `propagationPolicy?`, `ignoreNotFound?`, `dryRun?`, `force?: boolean` |
+| `k8s_scale_deployment` | Scale a deployment to specific number of replicas | `name` (required), `replicas` (required), `namespace?`, `dryRun?` |
+| `k8s_restart_deployment` | Perform rolling restart of a deployment | `name`, `namespace?`, `dryRun?` |
+| `k8s_rollback_deployment` | Rollback deployment to previous revision | `name`, `namespace?`, `revision?`, `dryRun?` |
+| `k8s_set_image` | Update container image in a deployment | `deployment` (required), `image` (required), `container?`, `namespace?`, `dryRun?` |
 | `k8s_deployment_rollout_status` | Check rollout status of a deployment | `name` (required), `namespace?` |
 | `k8s_rollout_history` | View rollout history for a deployment | `name`, `namespace?` |
 | `k8s_rollout_pause` | Pause a deployment rollout | `deployment`, `namespace?` |
@@ -936,7 +967,7 @@ All tools starting with `k8s_delete_`, `k8s_bulk_delete_`, `k8s_helm_uninstall`,
 
 ---
 
-*Generated for k8s-helm-mcp v0.28.0*
+*Generated for k8s-helm-mcp v0.29.0*
 
 ---
 

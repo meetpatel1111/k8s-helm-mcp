@@ -3,6 +3,17 @@ import { K8sClient } from "../k8s-client.js";
 import * as k8s from "@kubernetes/client-node";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName } from "../validators.js";
+import { commonListQuerySchema, applySortAndLimit } from "../utils/query-helper.js";
+import {
+  commonDeleteQuerySchema,
+  commonCreateQuerySchema,
+  isClientDryRun,
+  formatClientDryRunDelete,
+  formatClientDryRunCreate,
+  handleDeleteError,
+  buildServerDeleteParams,
+  buildServerCreateParams,
+} from "../utils/safety-helper.js";
 
 export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -17,51 +28,74 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
-            fieldSelector: {
-              type: "string",
-              description: "Field selector (e.g., reason=FailedScheduling)",
-            },
             type: {
               type: "string",
               description: "Event type filter (Normal, Warning)",
             },
+            ...commonListQuerySchema,
           },
         },
       },
-      handler: async ({ namespace, fieldSelector, type }: { 
+      handler: async ({
+        namespace,
+        fieldSelector,
+        type,
+        labelSelector,
+        sortBy,
+        descending,
+        limit,
+      }: { 
         namespace?: string; 
         fieldSelector?: string;
         type?: string;
-      }) => {
+        labelSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           let selector = fieldSelector || "";
           if (type) {
             selector = selector ? `${selector},type=${type}` : `type=${type}`;
           }
           
-          const events = await k8sClient.listEvents(namespace, selector || undefined);
+          const events = await k8sClient.listEvents(namespace, {
+            fieldSelector: selector || undefined,
+            labelSelector,
+          });
           
+          const mapped = events.map((e: k8s.CoreV1Event) => ({
+            name: e.metadata?.name,
+            type: e.type,
+            reason: e.reason,
+            message: e.message,
+            involvedObject: {
+              kind: e.involvedObject?.kind,
+              name: e.involvedObject?.name,
+              namespace: e.involvedObject?.namespace,
+            },
+            count: e.count,
+            firstTimestamp: e.firstTimestamp,
+            lastTimestamp: e.lastTimestamp,
+            source: e.source?.component,
+            creationTimestamp: e.metadata?.creationTimestamp,
+          }));
+
+          const effectiveSortBy = sortBy || "lastTimestamp";
+          const effectiveDescending = descending !== undefined ? descending : (sortBy ? false : true);
+          const effectiveLimit = limit !== undefined ? limit : 100;
+
+          const queryResult = applySortAndLimit(mapped, {
+            sortBy: effectiveSortBy,
+            descending: effectiveDescending,
+            limit: effectiveLimit,
+          });
+
           return {
-            events: events
-              .sort((a: k8s.CoreV1Event, b: k8s.CoreV1Event) => 
-                new Date(b.lastTimestamp || 0).getTime() - new Date(a.lastTimestamp || 0).getTime()
-              )
-              .slice(0, 100)
-              .map((e: k8s.CoreV1Event) => ({
-                type: e.type,
-                reason: e.reason,
-                message: e.message,
-                involvedObject: {
-                  kind: e.involvedObject?.kind,
-                  name: e.involvedObject?.name,
-                  namespace: e.involvedObject?.namespace,
-                },
-                count: e.count,
-                firstTimestamp: e.firstTimestamp,
-                lastTimestamp: e.lastTimestamp,
-                source: e.source?.component,
-              })),
+            events: queryResult.items,
             total: events.length,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
             warningCount: events.filter((e: k8s.CoreV1Event) => e.type === "Warning").length,
           };
         } catch (error) {
@@ -86,27 +120,49 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
+            ...commonListQuerySchema,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({
+        namespace,
+        sortBy,
+        descending,
+        limit,
+        output,
+      }: {
+        namespace?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+        output?: string;
+      } = {}) => {
         try {
           const coreApi = k8sClient.getCoreV1Api();
           const response = namespace
             ? await coreApi.listNamespacedResourceQuota({ namespace })
             : await coreApi.listResourceQuotaForAllNamespaces();
           
+          const mapped = response.items.map((rq: k8s.V1ResourceQuota) => ({
+            name: rq.metadata?.name,
+            namespace: rq.metadata?.namespace,
+            spec: rq.spec?.hard,
+            status: {
+              used: rq.status?.used,
+              hard: rq.status?.hard,
+            },
+            age: rq.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit, output });
+
           return {
-            resourceQuotas: response.items.map((rq: k8s.V1ResourceQuota) => ({
-              name: rq.metadata?.name,
-              namespace: rq.metadata?.namespace,
-              spec: rq.spec?.hard,
-              status: {
-                used: rq.status?.used,
-                hard: rq.status?.hard,
-              },
-              age: rq.metadata?.creationTimestamp,
-            })),
+            resourceQuotas: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            yaml: queryResult.yaml,
+            names: queryResult.names,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_get_resource_quotas", namespace };
@@ -130,30 +186,52 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
+            ...commonListQuerySchema,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({
+        namespace,
+        sortBy,
+        descending,
+        limit,
+        output,
+      }: {
+        namespace?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+        output?: string;
+      } = {}) => {
         try {
           const coreApi = k8sClient.getCoreV1Api();
           const response = namespace
             ? await coreApi.listNamespacedLimitRange({ namespace })
             : await coreApi.listLimitRangeForAllNamespaces();
           
-          return {
-            limitRanges: response.items.map((lr: k8s.V1LimitRange) => ({
-              name: lr.metadata?.name,
-              namespace: lr.metadata?.namespace,
-              limits: lr.spec?.limits?.map((l: k8s.V1LimitRangeItem) => ({
-                type: l.type,
-                max: l.max,
-                min: l.min,
-                _default: l._default,
-                defaultRequest: l.defaultRequest,
-                maxLimitRequestRatio: l.maxLimitRequestRatio,
-              })),
-              age: lr.metadata?.creationTimestamp,
+          const mapped = response.items.map((lr: k8s.V1LimitRange) => ({
+            name: lr.metadata?.name,
+            namespace: lr.metadata?.namespace,
+            limits: lr.spec?.limits?.map((l: k8s.V1LimitRangeItem) => ({
+              type: l.type,
+              max: l.max,
+              min: l.min,
+              _default: l._default,
+              defaultRequest: l.defaultRequest,
+              maxLimitRequestRatio: l.maxLimitRequestRatio,
             })),
+            age: lr.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit, output });
+
+          return {
+            limitRanges: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            yaml: queryResult.yaml,
+            names: queryResult.names,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_get_limit_ranges", namespace };
@@ -668,16 +746,18 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Scopes for the quota (e.g., Terminating, NotTerminating)",
               items: { type: "string" },
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "hard"],
         },
       },
-      handler: async ({ name, namespace, hard, scopeSelector, scopes }: { 
+      handler: async ({ name, namespace, hard, scopeSelector, scopes, dryRun }: { 
         name: string; 
         namespace?: string;
         hard: Record<string, string>;
         scopeSelector?: any;
         scopes?: string[];
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "resourcequota");
@@ -697,11 +777,22 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               scopes,
             },
           };
-          
-          const result = await coreApi.createNamespacedResourceQuota({ namespace: ns, body: resourceQuota }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "ResourceQuota",
+              name,
+              namespace: ns,
+              manifest: resourceQuota,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedResourceQuota({ namespace: ns, body: resourceQuota, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ResourceQuota ${name} created in namespace ${ns}`,
             resourceQuota: {
               name: result.metadata?.name,
@@ -772,14 +863,16 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
                 },
               },
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "limits"],
         },
       },
-      handler: async ({ name, namespace, limits }: { 
+      handler: async ({ name, namespace, limits, dryRun }: { 
         name: string; 
         namespace?: string;
         limits: any[];
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "limitrange");
@@ -804,11 +897,22 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               })),
             },
           };
-          
-          const result = await coreApi.createNamespacedLimitRange({ namespace: ns, body: limitRange }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "LimitRange",
+              name,
+              namespace: ns,
+              manifest: limitRange,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedLimitRange({ namespace: ns, body: limitRange, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `LimitRange ${name} created in namespace ${ns}`,
             limitRange: {
               name: result.metadata?.name,
@@ -845,33 +949,63 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the LimitRange",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { name: string; namespace?: string; gracePeriodSeconds?: number }) => {
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "limitrange");
+          const effPropagationPolicy = propagationPolicy || "Foreground";
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "LimitRange",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy: effPropagationPolicy,
+            });
+          }
+
           const coreApi = k8sClient.getCoreV1Api();
-          const ns = namespace || "default";
-          
+          const deleteParams = buildServerDeleteParams({
+            dryRun,
+            gracePeriodSeconds,
+            propagationPolicy: effPropagationPolicy,
+          });
+
           await coreApi.deleteNamespacedLimitRange({ 
             name, 
             namespace: ns,
-            gracePeriodSeconds: gracePeriodSeconds,
-            propagationPolicy: "Foreground"
+            ...deleteParams,
           }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `LimitRange ${name} deleted from namespace ${ns}`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_limitrange", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "LimitRange", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_limitrange", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -899,33 +1033,63 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the ResourceQuota",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { name: string; namespace?: string; gracePeriodSeconds?: number }) => {
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "resourcequota");
+          const effPropagationPolicy = propagationPolicy || "Foreground";
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "ResourceQuota",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy: effPropagationPolicy,
+            });
+          }
+
           const coreApi = k8sClient.getCoreV1Api();
-          const ns = namespace || "default";
-          
+          const deleteParams = buildServerDeleteParams({
+            dryRun,
+            gracePeriodSeconds,
+            propagationPolicy: effPropagationPolicy,
+          });
+
           await coreApi.deleteNamespacedResourceQuota({ 
             name, 
             namespace: ns,
-            gracePeriodSeconds: gracePeriodSeconds,
-            propagationPolicy: "Foreground"
+            ...deleteParams,
           }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ResourceQuota ${name} deleted from namespace ${ns}`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_resourcequota", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "ResourceQuota", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_resourcequota", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -948,42 +1112,73 @@ export function registerMonitoringTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
+            ...commonListQuerySchema,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({
+        namespace,
+        labelSelector,
+        fieldSelector,
+        sortBy,
+        descending,
+        limit,
+      }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           const rawClient = k8sClient as any;
           const ns = namespace;
           
           // PDB is in policy/v1 API
-          const path = ns
+          let path = ns
             ? `/apis/policy/v1/namespaces/${ns}/poddisruptionbudgets`
             : `/apis/policy/v1/poddisruptionbudgets`;
           
+          const params = new URLSearchParams();
+          if (labelSelector) params.append("labelSelector", labelSelector);
+          if (fieldSelector) params.append("fieldSelector", fieldSelector);
+          const qs = params.toString();
+          if (qs) path += `?${qs}`;
+
           const result = await rawClient.rawApiRequest(path);
           
           if (!result || !result.items) {
             return {
               podDisruptionBudgets: [],
               total: 0,
+              returned: 0,
               note: "No PodDisruptionBudgets found or policy API not available",
             };
           }
           
+          const mapped = result.items.map((pdb: any) => ({
+            name: pdb.metadata?.name,
+            namespace: pdb.metadata?.namespace,
+            minAvailable: pdb.spec?.minAvailable,
+            maxUnavailable: pdb.spec?.maxUnavailable,
+            selector: pdb.spec?.selector?.matchLabels,
+            disruptionsAllowed: pdb.status?.disruptionsAllowed,
+            currentHealthy: pdb.status?.currentHealthy,
+            desiredHealthy: pdb.status?.desiredHealthy,
+            age: pdb.metadata?.creationTimestamp,
+            creationTimestamp: pdb.metadata?.creationTimestamp,
+            labels: pdb.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            podDisruptionBudgets: result.items.map((pdb: any) => ({
-              name: pdb.metadata?.name,
-              namespace: pdb.metadata?.namespace,
-              minAvailable: pdb.spec?.minAvailable,
-              maxUnavailable: pdb.spec?.maxUnavailable,
-              selector: pdb.spec?.selector?.matchLabels,
-              disruptionsAllowed: pdb.status?.disruptionsAllowed,
-              currentHealthy: pdb.status?.currentHealthy,
-              desiredHealthy: pdb.status?.desiredHealthy,
-              age: pdb.metadata?.creationTimestamp,
-            })),
-            total: result.items.length,
+            podDisruptionBudgets: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_pod_disruption_budgets", namespace };

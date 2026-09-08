@@ -3,6 +3,7 @@ import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { K8sClient } from "../k8s-client.js";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName, validateNamespace, validatePort } from "../validators.js";
+import { commonCreateQuerySchema } from "../utils/safety-helper.js";
 
 export function registerTemplateTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -221,31 +222,34 @@ export function registerTemplateTools(k8sClient: K8sClient): { tool: Tool; handl
                 cpu: { type: "string" },
               },
             },
+            ...commonCreateQuerySchema,
           },
           required: ["template", "name", "image"],
         },
       },
-      handler: async ({ 
-        template, 
-        name, 
-        image, 
-        replicas, 
-        namespace, 
-        resources 
-      }: { 
-        template: string; 
-        name: string; 
-        image: string; 
-        replicas?: number; 
-        namespace?: string; 
-        resources?: { memory?: string; cpu?: string }; 
+      handler: async ({
+        template,
+        name,
+        image,
+        replicas,
+        namespace,
+        resources,
+        dryRun,
+      }: {
+        template: string;
+        name: string;
+        image: string;
+        replicas?: number;
+        namespace?: string;
+        resources?: { memory?: string; cpu?: string };
+        dryRun?: string;
       }) => {
         try {
           // Validate inputs
           validateResourceName(name, "deployment name");
           const ns = namespace || "default";
           validateNamespace(ns);
-          
+
           const templates = await k8sClient.applyManifest(`
 apiVersion: apps/v1
 kind: Deployment
@@ -274,10 +278,11 @@ spec:
           limits:
             memory: ${resources?.memory || "256Mi"}
             cpu: ${resources?.cpu || "200m"}
-        `);
+        `, { dryRun });
 
           return {
             deployed: true,
+            dryRun: dryRun || "none",
             template,
             name,
             namespace: ns,

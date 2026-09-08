@@ -4,6 +4,20 @@ import * as k8s from "@kubernetes/client-node";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName, validateNamespace, validateReplicas } from "../validators.js";
 import * as yaml from "js-yaml";
+import { commonListQuerySchema, commonGetQuerySchema, applySortAndLimit, applyGetFormatting, isNotFoundError } from "../utils/query-helper.js";
+import {
+  commonDeleteQuerySchema,
+  commonCreateQuerySchema,
+  commonMutationQuerySchema,
+  isClientDryRun,
+  formatClientDryRunDelete,
+  formatClientDryRunCreate,
+  formatClientDryRunMutation,
+  handleDeleteError,
+  buildServerDeleteParams,
+  buildServerCreateParams,
+  buildServerMutationParams,
+} from "../utils/safety-helper.js";
 
 export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -19,26 +33,45 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter (optional, all if not specified)",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const deployments = await k8sClient.listDeployments(namespace);
+          const deployments = await k8sClient.listDeployments(namespace, { labelSelector, fieldSelector });
+          const mapped = deployments.map((d: k8s.V1Deployment) => ({
+            name: d.metadata?.name,
+            namespace: d.metadata?.namespace,
+            replicas: d.spec?.replicas || 0,
+            ready: d.status?.readyReplicas || 0,
+            updated: d.status?.updatedReplicas || 0,
+            available: d.status?.availableReplicas || 0,
+            strategy: d.spec?.strategy?.type,
+            images: d.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
+            age: d.metadata?.creationTimestamp,
+            labels: d.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            deployments: deployments.map((d: k8s.V1Deployment) => ({
-              name: d.metadata?.name,
-              namespace: d.metadata?.namespace,
-              replicas: d.spec?.replicas || 0,
-              ready: d.status?.readyReplicas || 0,
-              updated: d.status?.updatedReplicas || 0,
-              available: d.status?.availableReplicas || 0,
-              strategy: d.spec?.strategy?.type,
-              images: d.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
-              age: d.metadata?.creationTimestamp,
-              labels: d.metadata?.labels,
-            })),
-            total: deployments.length,
+            deployments: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_deployments", namespace };
@@ -68,17 +101,33 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the deployment",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "deployment");
           const d = await k8sClient.getDeployment(name, namespace || "default");
-          return {
+          const rawResult = {
             name: d.metadata?.name,
             namespace: d.metadata?.namespace,
+            labels: d.metadata?.labels,
+            annotations: d.metadata?.annotations,
+            creationTimestamp: d.metadata?.creationTimestamp,
             spec: {
               replicas: d.spec?.replicas,
               selector: d.spec?.selector,
@@ -119,7 +168,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               })),
             },
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Deployment",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Deployment "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_deployment", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -152,19 +217,35 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Number of replicas",
               minimum: 0,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name", "replicas"],
         },
       },
-      handler: async ({ name, namespace, replicas }: { name: string; namespace?: string; replicas: number }) => {
+      handler: async ({ name, namespace, replicas, dryRun }: { name: string; namespace?: string; replicas: number; dryRun?: string }) => {
         try {
           validateResourceName(name, "deployment");
           validateReplicas(replicas);
-          const result = await k8sClient.scaleDeployment(name, namespace || "default", replicas);
+          const ns = namespace || "default";
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Scale deployment",
+              kind: "Deployment",
+              name,
+              namespace: ns,
+              patch: { spec: { replicas } },
+              details: { replicas },
+            });
+          }
+
+          const mutationParams = buildServerMutationParams({ dryRun });
+          const result = await k8sClient.scaleDeployment(name, ns, replicas, mutationParams);
           return {
             success: true,
+            dryRun: dryRun || "none",
             deployment: name,
-            namespace: namespace || "default",
+            namespace: ns,
             replicas: result.spec?.replicas,
             message: `Scaled deployment ${name} to ${replicas} replicas`,
           };
@@ -196,19 +277,46 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the deployment",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({ name, namespace, dryRun }: { name: string; namespace?: string; dryRun?: string }) => {
         try {
           validateResourceName(name, "deployment");
-          const result = await k8sClient.restartDeployment(name, namespace || "default");
+          const ns = namespace || "default";
+          const now = new Date().toISOString();
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Rolling restart deployment",
+              kind: "Deployment",
+              name,
+              namespace: ns,
+              patch: {
+                spec: {
+                  template: {
+                    metadata: {
+                      annotations: {
+                        "kubectl.kubernetes.io/restartedAt": now,
+                      },
+                    },
+                  },
+                },
+              },
+              details: { restartedAt: now },
+            });
+          }
+
+          const mutationParams = buildServerMutationParams({ dryRun });
+          const result = await k8sClient.restartDeployment(name, ns, mutationParams);
           return {
             success: true,
+            dryRun: dryRun || "none",
             deployment: name,
-            namespace: namespace || "default",
-            restartedAt: result.spec?.template?.metadata?.annotations?.["kubectl.kubernetes.io/restartedAt"],
+            namespace: ns,
+            restartedAt: result.spec?.template?.metadata?.annotations?.["kubectl.kubernetes.io/restartedAt"] || now,
             message: `Deployment ${name} restarted successfully`,
           };
         } catch (error) {
@@ -283,28 +391,45 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          const response = namespace
-            ? await appsApi.listNamespacedStatefulSet({ namespace })
-            : await appsApi.listStatefulSetForAllNamespaces();
-          
+          const items = await k8sClient.listStatefulSets(namespace, { labelSelector, fieldSelector });
+          const mapped = items.map((ss: k8s.V1StatefulSet) => ({
+            name: ss.metadata?.name,
+            namespace: ss.metadata?.namespace,
+            replicas: ss.spec?.replicas || 0,
+            ready: ss.status?.readyReplicas || 0,
+            current: ss.status?.currentReplicas || 0,
+            updated: ss.status?.updateRevision,
+            serviceName: ss.spec?.serviceName,
+            images: ss.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
+            age: ss.metadata?.creationTimestamp,
+            labels: ss.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            statefulsets: response.items.map((ss: k8s.V1StatefulSet) => ({
-              name: ss.metadata?.name,
-              namespace: ss.metadata?.namespace,
-              replicas: ss.spec?.replicas || 0,
-              ready: ss.status?.readyReplicas || 0,
-              current: ss.status?.currentReplicas || 0,
-              updated: ss.status?.updateRevision,
-              serviceName: ss.spec?.serviceName,
-              images: ss.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
-              age: ss.metadata?.creationTimestamp,
-            })),
+            statefulsets: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_statefulsets", namespace };
@@ -334,19 +459,35 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the StatefulSet",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "statefulset");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
           const ss = await appsApi.readNamespacedStatefulSet({ name, namespace: namespace || "default" });
           
-          return {
+          const rawResult = {
             name: ss.metadata?.name,
             namespace: ss.metadata?.namespace,
+            labels: ss.metadata?.labels,
+            annotations: ss.metadata?.annotations,
+            creationTimestamp: ss.metadata?.creationTimestamp,
             replicas: ss.spec?.replicas,
             serviceName: ss.spec?.serviceName,
             selector: ss.spec?.selector,
@@ -361,7 +502,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             },
             conditions: ss.status?.conditions,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "StatefulSet",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `StatefulSet "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_statefulset", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -394,28 +551,66 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Delete pods owned by the StatefulSet",
               default: true,
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, cascade }: { name: string; namespace?: string; cascade?: boolean }) => {
+      handler: async ({
+        name,
+        namespace,
+        cascade,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        cascade?: boolean;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "statefulset");
+          const effPropagationPolicy = propagationPolicy || (cascade === false ? "Orphan" : undefined);
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "StatefulSet",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy: effPropagationPolicy,
+            });
+          }
+
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          
+          const deleteParams = buildServerDeleteParams({
+            dryRun,
+            gracePeriodSeconds,
+            propagationPolicy: effPropagationPolicy,
+          });
+
           await appsApi.deleteNamespacedStatefulSet({
             name,
-            namespace: namespace || "default",
-            propagationPolicy: cascade === false ? "Orphan" : undefined
+            namespace: ns,
+            ...deleteParams,
           });
           
           return {
             success: true,
-            message: `StatefulSet ${name} deleted from ${namespace || "default"}`,
+            dryRun: dryRun || "none",
+            message: `StatefulSet ${name} deleted from ${ns}`,
             cascade: cascade !== false,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_statefulset", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "StatefulSet", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_statefulset", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -438,27 +633,44 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          const response = namespace
-            ? await appsApi.listNamespacedDaemonSet({ namespace })
-            : await appsApi.listDaemonSetForAllNamespaces();
-          
+          const items = await k8sClient.listDaemonSets(namespace, { labelSelector, fieldSelector });
+          const mapped = items.map((ds: k8s.V1DaemonSet) => ({
+            name: ds.metadata?.name,
+            namespace: ds.metadata?.namespace,
+            desired: ds.status?.desiredNumberScheduled || 0,
+            current: ds.status?.currentNumberScheduled || 0,
+            ready: ds.status?.numberReady || 0,
+            available: ds.status?.numberAvailable || 0,
+            images: ds.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
+            age: ds.metadata?.creationTimestamp,
+            labels: ds.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            daemonsets: response.items.map((ds: k8s.V1DaemonSet) => ({
-              name: ds.metadata?.name,
-              namespace: ds.metadata?.namespace,
-              desired: ds.status?.desiredNumberScheduled || 0,
-              current: ds.status?.currentNumberScheduled || 0,
-              ready: ds.status?.numberReady || 0,
-              available: ds.status?.numberAvailable || 0,
-              images: ds.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
-              age: ds.metadata?.creationTimestamp,
-            })),
+            daemonsets: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_daemonsets", namespace };
@@ -488,19 +700,35 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the DaemonSet",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "daemonset");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
           const ds = await appsApi.readNamespacedDaemonSet({ name, namespace: namespace || "default" });
           
-          return {
+          const rawResult = {
             name: ds.metadata?.name,
             namespace: ds.metadata?.namespace,
+            labels: ds.metadata?.labels,
+            annotations: ds.metadata?.annotations,
+            creationTimestamp: ds.metadata?.creationTimestamp,
             selector: ds.spec?.selector,
             template: ds.spec?.template,
             updateStrategy: ds.spec?.updateStrategy,
@@ -515,7 +743,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             },
             conditions: ds.status?.conditions,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "DaemonSet",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `DaemonSet "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_daemonset", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -543,22 +787,53 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the DaemonSet",
               default: "default",
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "daemonset");
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "DaemonSet",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
+          }
+
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          await appsApi.deleteNamespacedDaemonSet({ name, namespace: namespace || "default" });
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await appsApi.deleteNamespacedDaemonSet({ name, namespace: ns, ...deleteParams });
           
           return {
             success: true,
-            message: `DaemonSet ${name} deleted from ${namespace || "default"}`,
+            dryRun: dryRun || "none",
+            message: `DaemonSet ${name} deleted from ${ns}`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_daemonset", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "DaemonSet", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_daemonset", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -581,29 +856,46 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          const response = namespace
-            ? await appsApi.listNamespacedReplicaSet({ namespace })
-            : await appsApi.listReplicaSetForAllNamespaces();
-          
-          return {
-            replicasets: response.items.map((rs: k8s.V1ReplicaSet) => ({
-              name: rs.metadata?.name,
-              namespace: rs.metadata?.namespace,
-              replicas: rs.spec?.replicas || 0,
-              ready: rs.status?.readyReplicas || 0,
-              available: rs.status?.availableReplicas || 0,
-              ownerReferences: rs.metadata?.ownerReferences?.map((ref: k8s.V1OwnerReference) => ({
-                kind: ref.kind,
-                name: ref.name,
-              })),
-              age: rs.metadata?.creationTimestamp,
+          const items = await k8sClient.listReplicaSets(namespace, { labelSelector, fieldSelector });
+          const mapped = items.map((rs: k8s.V1ReplicaSet) => ({
+            name: rs.metadata?.name,
+            namespace: rs.metadata?.namespace,
+            replicas: rs.spec?.replicas || 0,
+            ready: rs.status?.readyReplicas || 0,
+            available: rs.status?.availableReplicas || 0,
+            ownerReferences: rs.metadata?.ownerReferences?.map((ref: k8s.V1OwnerReference) => ({
+              kind: ref.kind,
+              name: ref.name,
             })),
+            age: rs.metadata?.creationTimestamp,
+            labels: rs.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            replicasets: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_replicasets", namespace };
@@ -633,19 +925,35 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the ReplicaSet",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "replicaset");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
           const rs = await appsApi.readNamespacedReplicaSet({ name, namespace: namespace || "default" });
           
-          return {
+          const rawResult = {
             name: rs.metadata?.name,
             namespace: rs.metadata?.namespace,
+            labels: rs.metadata?.labels,
+            annotations: rs.metadata?.annotations,
+            creationTimestamp: rs.metadata?.creationTimestamp,
             replicas: rs.spec?.replicas,
             selector: rs.spec?.selector,
             template: rs.spec?.template,
@@ -659,7 +967,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             },
             conditions: rs.status?.conditions,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "ReplicaSet",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `ReplicaSet "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_replicaset", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -692,28 +1016,66 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Delete pods owned by the ReplicaSet",
               default: true,
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, cascade }: { name: string; namespace?: string; cascade?: boolean }) => {
+      handler: async ({
+        name,
+        namespace,
+        cascade,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        cascade?: boolean;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "replicaset");
+          const effPropagationPolicy = propagationPolicy || (cascade === false ? "Orphan" : undefined);
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "ReplicaSet",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy: effPropagationPolicy,
+            });
+          }
+
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          
+          const deleteParams = buildServerDeleteParams({
+            dryRun,
+            gracePeriodSeconds,
+            propagationPolicy: effPropagationPolicy,
+          });
+
           await appsApi.deleteNamespacedReplicaSet({
             name,
-            namespace: namespace || "default",
-            propagationPolicy: cascade === false ? "Orphan" : undefined
+            namespace: ns,
+            ...deleteParams,
           });
           
           return {
             success: true,
-            message: `ReplicaSet ${name} deleted from ${namespace || "default"}`,
+            dryRun: dryRun || "none",
+            message: `ReplicaSet ${name} deleted from ${ns}`,
             cascade: cascade !== false,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_replicaset", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "ReplicaSet", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_replicaset", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -736,29 +1098,50 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const jobs = await k8sClient.listJobs(namespace);
+          const jobs = await k8sClient.listJobs(namespace, { labelSelector, fieldSelector });
+          const mapped = jobs.map((job: k8s.V1Job) => ({
+            name: job.metadata?.name,
+            namespace: job.metadata?.namespace,
+            completions: job.spec?.completions,
+            parallelism: job.spec?.parallelism,
+            active: job.status?.active || 0,
+            succeeded: job.status?.succeeded || 0,
+            failed: job.status?.failed || 0,
+            completionTime: job.status?.completionTime,
+            startTime: job.status?.startTime,
+            duration: job.status?.completionTime && job.status?.startTime
+              ? Math.round((new Date(job.status.completionTime).getTime() - new Date(job.status.startTime).getTime()) / 1000)
+              : null,
+            age: job.metadata?.creationTimestamp,
+            images: job.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
+            labels: job.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            jobs: jobs.map((job: k8s.V1Job) => ({
-              name: job.metadata?.name,
-              namespace: job.metadata?.namespace,
-              completions: job.spec?.completions,
-              parallelism: job.spec?.parallelism,
-              active: job.status?.active || 0,
-              succeeded: job.status?.succeeded || 0,
-              failed: job.status?.failed || 0,
-              completionTime: job.status?.completionTime,
-              startTime: job.status?.startTime,
-              duration: job.status?.completionTime && job.status?.startTime
-                ? Math.round((new Date(job.status.completionTime).getTime() - new Date(job.status.startTime).getTime()) / 1000)
-                : null,
-              age: job.metadata?.creationTimestamp,
-              images: job.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
-            })),
+            jobs: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_jobs", namespace };
@@ -788,19 +1171,35 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the Job",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "job");
           const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
           const job = await batchApi.readNamespacedJob({ name, namespace: namespace || "default" }, {});
           
-          return {
+          const rawResult = {
             name: job.metadata?.name,
             namespace: job.metadata?.namespace,
+            labels: job.metadata?.labels,
+            annotations: job.metadata?.annotations,
+            creationTimestamp: job.metadata?.creationTimestamp,
             completions: job.spec?.completions,
             parallelism: job.spec?.parallelism,
             activeDeadlineSeconds: job.spec?.activeDeadlineSeconds,
@@ -819,7 +1218,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             },
             conditions: job.status?.conditions,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Job",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Job "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_job", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -852,29 +1267,62 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Delete pods owned by the Job",
               default: true,
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, cascade }: { name: string; namespace?: string; cascade?: boolean }) => {
+      handler: async ({
+        name,
+        namespace,
+        cascade,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        cascade?: boolean;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "job");
-          const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
-          
-          const deleteOptions: any = {};
-          if (!cascade) {
-            deleteOptions.propagationPolicy = "Orphan";
+          const effPropagationPolicy = propagationPolicy || (cascade === false ? "Orphan" : undefined);
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Job",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy: effPropagationPolicy,
+            });
           }
-          
-          await batchApi.deleteNamespacedJob({ name, namespace: namespace || "default", ...deleteOptions }, {});
+
+          const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
+          const deleteParams = buildServerDeleteParams({
+            dryRun,
+            gracePeriodSeconds,
+            propagationPolicy: effPropagationPolicy,
+          });
+
+          await batchApi.deleteNamespacedJob({ name, namespace: ns, ...deleteParams }, {});
           
           return {
             success: true,
-            message: `Job ${name} deleted from ${namespace || "default"}`,
+            dryRun: dryRun || "none",
+            message: `Job ${name} deleted from ${ns}`,
             cascade: cascade !== false,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_job", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "Job", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_job", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -901,11 +1349,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the CronJob",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({ name, namespace, dryRun }: { name: string; namespace?: string; dryRun?: string }) => {
         try {
           validateResourceName(name, "cronjob");
           const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
@@ -927,11 +1376,24 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             },
             spec: cronJob.spec?.jobTemplate?.spec,
           };
-        
-          await batchApi.createNamespacedJob({ namespace: namespace || "default", body: job });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Trigger CronJob",
+              kind: "Job",
+              name: jobName,
+              namespace: namespace || "default",
+              patch: job,
+              details: { cronJob: name },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          await batchApi.createNamespacedJob({ namespace: namespace || "default", body: job, dryRun: serverDryRunParam });
         
           return {
             success: true,
+            dryRun: dryRun || "none",
             cronJob: name,
             jobName,
             namespace: namespace || "default",
@@ -961,28 +1423,49 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const cronJobs = await k8sClient.listCronJobs(namespace);
+          const cronJobs = await k8sClient.listCronJobs(namespace, { labelSelector, fieldSelector });
+          const mapped = cronJobs.map((cj: k8s.V1CronJob) => ({
+            name: cj.metadata?.name,
+            namespace: cj.metadata?.namespace,
+            schedule: cj.spec?.schedule,
+            suspend: cj.spec?.suspend,
+            activeDeadlineSeconds: cj.spec?.jobTemplate?.spec?.activeDeadlineSeconds,
+            lastScheduleTime: cj.status?.lastScheduleTime,
+            lastSuccessfulTime: cj.status?.lastSuccessfulTime,
+            concurrencyPolicy: cj.spec?.concurrencyPolicy,
+            successfulJobHistoryLimit: cj.spec?.successfulJobsHistoryLimit,
+            failedJobHistoryLimit: cj.spec?.failedJobsHistoryLimit,
+            startingDeadlineSeconds: cj.spec?.startingDeadlineSeconds,
+            images: cj.spec?.jobTemplate?.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
+            age: cj.metadata?.creationTimestamp,
+            labels: cj.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            cronjobs: cronJobs.map((cj: k8s.V1CronJob) => ({
-              name: cj.metadata?.name,
-              namespace: cj.metadata?.namespace,
-              schedule: cj.spec?.schedule,
-              suspend: cj.spec?.suspend,
-              activeDeadlineSeconds: cj.spec?.jobTemplate?.spec?.activeDeadlineSeconds,
-              lastScheduleTime: cj.status?.lastScheduleTime,
-              lastSuccessfulTime: cj.status?.lastSuccessfulTime,
-              concurrencyPolicy: cj.spec?.concurrencyPolicy,
-              successfulJobHistoryLimit: cj.spec?.successfulJobsHistoryLimit,
-              failedJobHistoryLimit: cj.spec?.failedJobsHistoryLimit,
-              startingDeadlineSeconds: cj.spec?.startingDeadlineSeconds,
-              images: cj.spec?.jobTemplate?.spec?.template?.spec?.containers.map((c: k8s.V1Container) => c.image),
-              age: cj.metadata?.creationTimestamp,
-            })),
+            cronjobs: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_cronjobs", namespace };
@@ -1013,19 +1496,35 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the CronJob",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "cronjob");
           const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
           const cj = await batchApi.readNamespacedCronJob({ name, namespace: namespace || "default" });
 
-          return {
+          const rawResult = {
             name: cj.metadata?.name,
             namespace: cj.metadata?.namespace,
+            labels: cj.metadata?.labels,
+            annotations: cj.metadata?.annotations,
+            creationTimestamp: cj.metadata?.creationTimestamp,
             schedule: cj.spec?.schedule,
             suspend: cj.spec?.suspend,
             concurrencyPolicy: cj.spec?.concurrencyPolicy,
@@ -1051,7 +1550,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               lastSuccessfulTime: cj.status?.lastSuccessfulTime,
             },
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "CronJob",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `CronJob "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_cronjob", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -1237,15 +1752,17 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "number",
               description: "Revision to rollback to (optional, rolls back to previous if not specified)",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, revision }: { name: string; namespace?: string; revision?: number }) => {
+      handler: async ({ name, namespace, revision, dryRun }: { name: string; namespace?: string; revision?: number; dryRun?: string }) => {
         const ns = namespace || "default";
         
         try {
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           
           if (revision) {
             // Get the specific replica set for this revision
@@ -1268,11 +1785,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
                 template: targetRS.spec?.template,
               },
             };
+
+            if (isClientDryRun(dryRun)) {
+              return formatClientDryRunMutation({
+                operation: "Rollout undo",
+                kind: "Deployment",
+                name,
+                namespace: ns,
+                patch,
+                details: { targetRevision: revision },
+              });
+            }
             
             await appsApi.patchNamespacedDeployment({
               name,
               namespace: ns,
-              body: patch
+              body: patch,
+              dryRun: serverDryRunParam,
             }, {
               middleware: [{
                 pre: async (context: any) => {
@@ -1285,6 +1814,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             
             return {
               success: true,
+              dryRun: dryRun || "none",
               deployment: name,
               namespace: ns,
               rolledBackTo: revision,
@@ -1309,11 +1839,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
                 },
               },
             };
+
+            if (isClientDryRun(dryRun)) {
+              return formatClientDryRunMutation({
+                operation: "Rollout undo",
+                kind: "Deployment",
+                name,
+                namespace: ns,
+                patch,
+                details: { targetRevision: "previous" },
+              });
+            }
             
             await appsApi.patchNamespacedDeployment({
               name,
               namespace: ns,
-              body: patch
+              body: patch,
+              dryRun: serverDryRunParam,
             }, {
               middleware: [{
                 pre: async (context: any) => {
@@ -1326,6 +1868,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             
             return {
               success: true,
+              dryRun: dryRun || "none",
               deployment: name,
               namespace: ns,
               message: `Deployment ${name} rolled back to previous revision`,
@@ -1387,11 +1930,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               items: { type: "string" },
               description: "Image pull secrets for private registries (e.g., ACR, ECR, GCR)",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "image"],
         },
       },
-      handler: async ({ name, image, namespace, replicas, port, env, labels, imagePullSecrets }: { 
+      handler: async ({ name, image, namespace, replicas, port, env, labels, imagePullSecrets, dryRun }: { 
         name: string; 
         image: string; 
         namespace?: string; 
@@ -1400,6 +1944,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         env?: string[];
         labels?: Record<string, string>;
         imagePullSecrets?: string[];
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -1445,11 +1990,22 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
-          const result = await appsApi.createNamespacedDeployment({ namespace: ns, body: deployment }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Deployment",
+              name,
+              namespace: ns,
+              manifest: deployment,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await appsApi.createNamespacedDeployment({ namespace: ns, body: deployment, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             deployment: name,
             namespace: ns,
             image,
@@ -1509,11 +2065,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "number",
               description: "Number of pods to run in parallel",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "image"],
         },
       },
-      handler: async ({ name, image, namespace, command, restartPolicy, completions, parallelism }: { 
+      handler: async ({ name, image, namespace, command, restartPolicy, completions, parallelism, dryRun }: { 
         name: string; 
         image: string; 
         namespace?: string; 
@@ -1521,6 +2078,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         restartPolicy?: string;
         completions?: number;
         parallelism?: number;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -1551,11 +2109,22 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
-          const result = await batchApi.createNamespacedJob({ namespace: ns, body: job }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Job",
+              name,
+              namespace: ns,
+              manifest: job,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await batchApi.createNamespacedJob({ namespace: ns, body: job, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             job: name,
             namespace: ns,
             image,
@@ -1616,18 +2185,20 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Suspend cronjob scheduling",
               default: false,
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "image", "schedule"],
         },
       },
-      handler: async ({ name, image, schedule, namespace, command, restartPolicy, suspend }: { 
+      handler: async ({ name, image, schedule, namespace, command, restartPolicy, suspend, dryRun }: { 
         name: string; 
         image: string; 
-        schedule: string;
+        schedule: string; 
         namespace?: string; 
         command?: string[];
         restartPolicy?: string;
         suspend?: boolean;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -1662,11 +2233,22 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
-          const result = await batchApi.createNamespacedCronJob({ namespace: ns, body: cronJob }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "CronJob",
+              name,
+              namespace: ns,
+              manifest: cronJob,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await batchApi.createNamespacedCronJob({ namespace: ns, body: cronJob, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             cronJob: name,
             namespace: ns,
             image,
@@ -1712,15 +2294,17 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "New container image",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["deployment", "image"],
         },
       },
-      handler: async ({ deployment, namespace, container, image }: { 
+      handler: async ({ deployment, namespace, container, image, dryRun }: { 
         deployment: string; 
         namespace?: string; 
         container?: string;
         image: string;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -1737,6 +2321,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             return { success: false, error: "No container found in deployment" };
           }
           
+          const oldImage = containers.find((c: any) => c.name === targetContainer)?.image;
+
           // Create patch to update image
           const patch = {
             spec: {
@@ -1749,11 +2335,28 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Set container image",
+              kind: "Deployment",
+              name: deployment,
+              namespace: ns,
+              patch,
+              details: {
+                container: targetContainer,
+                oldImage,
+                newImage: image,
+              },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           const result = await appsApi.patchNamespacedDeployment({
             name: deployment,
             namespace: ns,
-            body: patch
+            body: patch,
+            dryRun: serverDryRunParam,
           }, {
             middleware: [{
               pre: async (context: any) => {
@@ -1766,12 +2369,13 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             deployment,
             namespace: ns,
             container: targetContainer,
-            oldImage: containers.find((c: any) => c.name === targetContainer)?.image,
+            oldImage,
             newImage: image,
-            message: `Updated ${targetContainer} in deployment ${deployment} to ${image}`,
+            message: `Updated image for container ${targetContainer} in deployment ${deployment} to ${image}`,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_set_image", resource: deployment, namespace: ns };
@@ -1823,11 +2427,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Name for the new service (defaults to resource name)",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "port"],
         },
       },
-      handler: async ({ resource, name, namespace, port, targetPort, type, serviceName }: { 
+      handler: async ({ resource, name, namespace, port, targetPort, type, serviceName, dryRun }: { 
         resource: string; 
         name: string; 
         namespace?: string; 
@@ -1835,6 +2440,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         targetPort?: number;
         type?: string;
         serviceName?: string;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         const svcName = serviceName || name;
@@ -1847,9 +2453,13 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           
           // Try to get actual selector from resource
           if (resource.toLowerCase() === "deployment" || resource.toLowerCase() === "deployments") {
-            const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-            const deploy = await appsApi.readNamespacedDeployment({ name, namespace: ns }, {});
-            selector = deploy.spec?.selector?.matchLabels || selector;
+            try {
+              const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
+              const deploy = await appsApi.readNamespacedDeployment({ name, namespace: ns }, {});
+              selector = deploy.spec?.selector?.matchLabels || selector;
+            } catch {
+              // Ignore error if resource not found or during client dry run
+            }
           }
           
           const service: k8s.V1Service = {
@@ -1871,11 +2481,24 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               ],
             },
           };
-          
-          const result = await coreApi.createNamespacedService({ namespace: ns, body: service });
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Expose resource as service",
+              kind: "Service",
+              name: svcName,
+              namespace: ns,
+              patch: service,
+              details: { resource, name, port, targetPort: targetPort || port, type: type || "ClusterIP" },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          const result = await coreApi.createNamespacedService({ namespace: ns, body: service, dryRun: serverDryRunParam });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             service: svcName,
             namespace: ns,
             type: type || "ClusterIP",
@@ -1928,16 +2551,18 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Target CPU utilization percentage",
               default: 80,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["deployment", "min", "max"],
         },
       },
-      handler: async ({ deployment, namespace, min, max, cpuPercent }: { 
+      handler: async ({ deployment, namespace, min, max, cpuPercent, dryRun }: { 
         deployment: string; 
         namespace?: string; 
         min: number; 
-        max: number;
+        max: number; 
         cpuPercent?: number;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -1974,11 +2599,24 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               ],
             },
           };
-          
-          const result = await autoscalingApi.createNamespacedHorizontalPodAutoscaler({ namespace: ns, body: hpa }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Autoscale deployment",
+              kind: "HorizontalPodAutoscaler",
+              name: `${deployment}-hpa`,
+              namespace: ns,
+              patch: hpa,
+              details: { min, max, targetCpu: cpuPercent || 80 },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          const result = await autoscalingApi.createNamespacedHorizontalPodAutoscaler({ namespace: ns, body: hpa, dryRun: serverDryRunParam }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             hpa: result.metadata?.name,
             namespace: ns,
             deployment,
@@ -2030,16 +2668,18 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Overwrite existing labels",
               default: false,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "labels"],
         },
       },
-      handler: async ({ resource, name, namespace, labels, overwrite }: { 
+      handler: async ({ resource, name, namespace, labels, overwrite, dryRun }: { 
         resource: string; 
         name: string; 
-        namespace?: string;
-        labels: Record<string, string | null>;
+        namespace?: string; 
+        labels: Record<string, string | null>; 
         overwrite?: boolean;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -2058,7 +2698,21 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           const labelsToAdd = Object.entries(newLabels)
             .filter(([, v]) => v !== null)
             .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {});
-          
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Update labels",
+              kind: resource,
+              name,
+              namespace: ns,
+              details: {
+                labelsAdded: labelsToAdd,
+                labelsRemoved: labelsToRemove,
+              },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           let result: any;
           
           switch (resource.toLowerCase()) {
@@ -2068,7 +2722,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
                 result = await coreApi.patchNamespacedPod({
                   name,
                   namespace: ns,
-                  body: { metadata: { labels: labelsToAdd } }
+                  body: { metadata: { labels: labelsToAdd } },
+                  dryRun: serverDryRunParam,
                 }, {
                   middleware: [{
                     pre: async (context: any) => {
@@ -2086,7 +2741,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await appsApi.patchNamespacedDeployment({
                 name,
                 namespace: ns,
-                body: { metadata: { labels: labelsToAdd } }
+                body: { metadata: { labels: labelsToAdd } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2102,7 +2758,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             case "nodes":
               result = await k8sClient.patchNode(
                 name,
-                { metadata: { labels: labelsToAdd } }
+                { metadata: { labels: labelsToAdd } },
+                { dryRun: serverDryRunParam }
               );
               break;
               
@@ -2112,6 +2769,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             resource: `${resource}/${name}`,
             namespace: ns,
             labelsAdded: labelsToAdd,
@@ -2159,16 +2817,18 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Overwrite existing annotations",
               default: false,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "annotations"],
         },
       },
-      handler: async ({ resource, name, namespace, annotations, overwrite }: { 
+      handler: async ({ resource, name, namespace, annotations, overwrite, dryRun }: { 
         resource: string; 
         name: string; 
-        namespace?: string;
-        annotations: Record<string, string | null>;
+        namespace?: string; 
+        annotations: Record<string, string | null>; 
         overwrite?: boolean;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -2183,7 +2843,21 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           const annotationsToAdd = Object.entries(annotations)
             .filter(([, v]) => v !== null)
             .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {});
-          
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Update annotations",
+              kind: resource,
+              name,
+              namespace: ns,
+              details: {
+                annotationsAdded: annotationsToAdd,
+                annotationsRemoved: annotationsToRemove,
+              },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
           let result: any;
           
           switch (resource.toLowerCase()) {
@@ -2192,7 +2866,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await coreApi.patchNamespacedPod({
                 name,
                 namespace: ns,
-                body: { metadata: { annotations: annotationsToAdd } }
+                body: { metadata: { annotations: annotationsToAdd } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2209,7 +2884,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await appsApi.patchNamespacedDeployment({
                 name,
                 namespace: ns,
-                body: { metadata: { annotations: annotationsToAdd } }
+                body: { metadata: { annotations: annotationsToAdd } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2227,7 +2903,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await coreApi.patchNamespacedService({
                 name,
                 namespace: ns,
-                body: { metadata: { annotations: annotationsToAdd } }
+                body: { metadata: { annotations: annotationsToAdd } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2243,7 +2920,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             case "nodes":
               result = await k8sClient.patchNode(
                 name,
-                { metadata: { annotations: annotationsToAdd } }
+                { metadata: { annotations: annotationsToAdd } },
+                { dryRun: serverDryRunParam }
               );
               break;
               
@@ -2309,11 +2987,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "YAML/JSON manifest content to identify resource (like kubectl scale -f)",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["replicas"],
         },
       },
-      handler: async ({ resource, name, names, namespace, replicas, currentReplicas, manifest }: { 
+      handler: async ({ resource, name, names, namespace, replicas, currentReplicas, manifest, dryRun }: { 
         resource?: string; 
         name?: string;
         names?: string[];
@@ -2321,6 +3000,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         replicas: number;
         currentReplicas?: number;
         manifest?: string;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -2332,6 +3012,20 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           // Handle file-based scaling
           if (manifest) {
             const docs = yaml.loadAll(manifest) as any[];
+            if (isClientDryRun(dryRun)) {
+              const simulated = docs.filter(d => d?.metadata?.name).map(d => ({
+                kind: d.kind,
+                name: d.metadata.name,
+                namespace: d.metadata.namespace || ns,
+                targetReplicas: replicas,
+              }));
+              return formatClientDryRunMutation({
+                operation: "Scale resources from manifest",
+                name: "manifest",
+                details: { simulatedResources: simulated, targetReplicas: replicas },
+              });
+            }
+
             for (const doc of docs) {
               if (!doc?.metadata?.name) continue;
               
@@ -2340,7 +3034,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               const resNs = doc.metadata.namespace || ns;
               
               try {
-                const result = await scaleResource(appsApi, resType, resName, resNs, replicas, currentReplicas);
+                const result = await scaleResource(appsApi, resType, resName, resNs, replicas, currentReplicas, dryRun);
                 results.push(result);
               } catch (err) {
                 errors.push({ resource: `${resType}/${resName}`, error: String(err) });
@@ -2349,6 +3043,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             
             return {
               success: errors.length === 0,
+              dryRun: dryRun || "none",
               scaled: results.length,
               failed: errors.length,
               results,
@@ -2361,10 +3056,20 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             if (!resource) {
               return { success: false, error: "Resource type required when scaling multiple resources" };
             }
+
+            if (isClientDryRun(dryRun)) {
+              return formatClientDryRunMutation({
+                operation: "Scale multiple resources",
+                kind: resource,
+                name: names.join(", "),
+                namespace: ns,
+                details: { resources: names.map(n => `${resource}/${n}`), targetReplicas: replicas, currentReplicas },
+              });
+            }
             
             for (const resName of names) {
               try {
-                const result = await scaleResource(appsApi, resource, resName, ns, replicas, currentReplicas);
+                const result = await scaleResource(appsApi, resource, resName, ns, replicas, currentReplicas, dryRun);
                 results.push(result);
               } catch (err) {
                 errors.push({ resource: `${resource}/${resName}`, error: String(err) });
@@ -2373,6 +3078,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             
             return {
               success: errors.length === 0,
+              dryRun: dryRun || "none",
               scaled: results.length,
               failed: errors.length,
               results,
@@ -2382,7 +3088,17 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           
           // Handle single resource
           if (name && resource) {
-            const result = await scaleResource(appsApi, resource, name, ns, replicas, currentReplicas);
+            if (isClientDryRun(dryRun)) {
+              return formatClientDryRunMutation({
+                operation: "Scale resource",
+                kind: resource,
+                name,
+                namespace: ns,
+                details: { targetReplicas: replicas, currentReplicas },
+              });
+            }
+
+            const result = await scaleResource(appsApi, resource, name, ns, replicas, currentReplicas, dryRun);
             return {
               success: true,
               ...result,
@@ -2402,9 +3118,10 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           };
         }
         
-        async function scaleResource(appsApi: any, resourceType: string, resName: string, resNs: string, targetReplicas: number, expectedCurrent?: number) {
+        async function scaleResource(appsApi: any, resourceType: string, resName: string, resNs: string, targetReplicas: number, expectedCurrent?: number, dryRunParam?: string) {
           let result: any;
           const type = resourceType.toLowerCase();
+          const serverDryRunParam = dryRunParam === "server" ? "All" : undefined;
           
           switch (type) {
             case "deployment":
@@ -2415,7 +3132,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
                   throw new Error(`Current replicas (${current.spec?.replicas}) != expected (${expectedCurrent})`);
                 }
               }
-              result = await k8sClient.scaleDeployment(resName, resNs, targetReplicas);
+              result = await k8sClient.scaleDeployment(resName, resNs, targetReplicas, { dryRun: serverDryRunParam });
               break;
               
             case "replicaset":
@@ -2424,7 +3141,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await appsApi.patchNamespacedReplicaSet({
                 name: resName,
                 namespace: resNs,
-                body: { spec: { replicas: targetReplicas } }
+                body: { spec: { replicas: targetReplicas } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2442,7 +3160,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await appsApi.patchNamespacedStatefulSet({
                 name: resName,
                 namespace: resNs,
-                body: { spec: { replicas: targetReplicas } }
+                body: { spec: { replicas: targetReplicas } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2460,7 +3179,8 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               result = await coreApi.patchNamespacedReplicationController({
                 name: resName,
                 namespace: resNs,
-                body: { spec: { replicas: targetReplicas } }
+                body: { spec: { replicas: targetReplicas } },
+                dryRun: serverDryRunParam,
               }, {
                 middleware: [{
                   pre: async (context: any) => {
@@ -2481,6 +3201,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             namespace: resNs,
             replicas: targetReplicas,
             previousReplicas: result?.spec?.replicas || targetReplicas,
+            dryRun: dryRunParam || "none",
           };
         }
       },
@@ -2502,46 +3223,66 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the Deployment",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
             force: {
               type: "boolean",
               description: "Force delete (immediate removal)",
               default: false,
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds, force }: { 
+      handler: async ({
+        name,
+        namespace,
+        force,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
-        gracePeriodSeconds?: number;
         force?: boolean;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "deployment");
+          const effGracePeriod = force ? 0 : gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Deployment",
+              name,
+              namespace: ns,
+              gracePeriodSeconds: effGracePeriod,
+              propagationPolicy,
+            });
+          }
+
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
-          }
-          if (force) {
-            options.gracePeriodSeconds = 0;
-          }
-          
-          await appsApi.deleteNamespacedDeployment({ name, namespace: ns, ...options }, {});
+          const deleteParams = buildServerDeleteParams({
+            dryRun,
+            gracePeriodSeconds: effGracePeriod,
+            propagationPolicy,
+          });
+
+          await appsApi.deleteNamespacedDeployment({ name, namespace: ns, ...deleteParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Deployment ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_deployment", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "Deployment", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_deployment", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -2569,37 +3310,53 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the CronJob",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "cronjob");
-          const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "CronJob",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await batchApi.deleteNamespacedCronJob({ name, namespace: ns, ...options }, {});
+
+          const batchApi = (k8sClient as any).kc.makeApiClient(k8s.BatchV1Api);
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await batchApi.deleteNamespacedCronJob({ name, namespace: ns, ...deleteParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `CronJob ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_cronjob", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "CronJob", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_cronjob", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -2627,11 +3384,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the deployment",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["deployment"],
         },
       },
-      handler: async ({ deployment, namespace }: { deployment: string; namespace?: string }) => {
+      handler: async ({ deployment, namespace, dryRun }: { deployment: string; namespace?: string; dryRun?: string }) => {
         try {
           validateResourceName(deployment, "deployment");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
@@ -2643,11 +3401,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               paused: true,
             },
           };
-          
-          await appsApi.patchNamespacedDeployment({ name: deployment, namespace: ns, body: patch }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Pause deployment rollout",
+              kind: "Deployment",
+              name: deployment,
+              namespace: ns,
+              patch,
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          await appsApi.patchNamespacedDeployment({ name: deployment, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Deployment ${deployment} rollout paused`,
           };
         } catch (error) {
@@ -2679,11 +3449,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the deployment",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["deployment"],
         },
       },
-      handler: async ({ deployment, namespace }: { deployment: string; namespace?: string }) => {
+      handler: async ({ deployment, namespace, dryRun }: { deployment: string; namespace?: string; dryRun?: string }) => {
         try {
           validateResourceName(deployment, "deployment");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
@@ -2695,11 +3466,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               paused: false,
             },
           };
-          
-          await appsApi.patchNamespacedDeployment({ name: deployment, namespace: ns, body: patch }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Resume deployment rollout",
+              kind: "Deployment",
+              name: deployment,
+              namespace: ns,
+              patch,
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          await appsApi.patchNamespacedDeployment({ name: deployment, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Deployment ${deployment} rollout resumed`,
           };
         } catch (error) {
@@ -2731,11 +3514,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the StatefulSet",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({ name, namespace, dryRun }: { name: string; namespace?: string; dryRun?: string }) => {
         try {
           validateResourceName(name, "statefulset");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
@@ -2754,11 +3538,24 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
-          await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: patch }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Restart StatefulSet",
+              kind: "StatefulSet",
+              name,
+              namespace: ns,
+              patch,
+              details: { restartTimestamp: timestamp },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          await appsApi.patchNamespacedStatefulSet({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `StatefulSet ${name} restarted`,
             timestamp,
           };
@@ -2791,11 +3588,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the DaemonSet",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({ name, namespace, dryRun }: { name: string; namespace?: string; dryRun?: string }) => {
         try {
           validateResourceName(name, "daemonset");
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
@@ -2814,11 +3612,24 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
-          await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: patch }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Restart DaemonSet",
+              kind: "DaemonSet",
+              name,
+              namespace: ns,
+              patch,
+              details: { restartTimestamp: timestamp },
+            });
+          }
+
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          await appsApi.patchNamespacedDaemonSet({ name, namespace: ns, body: patch, dryRun: serverDryRunParam }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `DaemonSet ${name} restarted`,
             timestamp,
           };
@@ -2874,11 +3685,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "number",
               description: "Target memory utilization percentage",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name", "deployment"],
         },
       },
-      handler: async ({ name, deployment, namespace, minReplicas, maxReplicas, cpuPercent, memoryPercent }: { 
+      handler: async ({ name, deployment, namespace, minReplicas, maxReplicas, cpuPercent, memoryPercent, dryRun }: { 
         name: string;
         deployment: string;
         namespace?: string;
@@ -2886,6 +3698,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         maxReplicas?: number;
         cpuPercent?: number;
         memoryPercent?: number;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "horizontalpodautoscaler");
@@ -2933,12 +3746,27 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               ],
             },
           };
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Create HPA",
+              kind: "HorizontalPodAutoscaler",
+              name,
+              namespace: ns,
+              patch: hpa,
+              details: { deployment, minReplicas: minReplicas || 1, maxReplicas: maxReplicas || 10, cpuPercent, memoryPercent },
+            });
+          }
           
           // Apply via raw API
-          const result = await rawClient.rawApiRequest(`/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers`, "POST", hpa);
+          const url = dryRun === "server" 
+            ? `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers?dryRun=All` 
+            : `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers`;
+          const result = await rawClient.rawApiRequest(url, "POST", hpa);
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `HPA ${name} created for deployment ${deployment}`,
             hpa: {
               name,
@@ -2974,41 +3802,65 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: "string",
               description: "Namespace to filter (shows all if not specified)",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
           const rawClient = k8sClient as any;
           
+          const queryParams = new URLSearchParams();
+          if (labelSelector) queryParams.set("labelSelector", labelSelector);
+          if (fieldSelector) queryParams.set("fieldSelector", fieldSelector);
+          const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
           const path = namespace
-            ? `/apis/autoscaling/v2/namespaces/${namespace}/horizontalpodautoscalers`
-            : `/apis/autoscaling/v2/horizontalpodautoscalers`;
+            ? `/apis/autoscaling/v2/namespaces/${namespace}/horizontalpodautoscalers${qs}`
+            : `/apis/autoscaling/v2/horizontalpodautoscalers${qs}`;
           
           const result = await rawClient.rawApiRequest(path);
           
           const hpas = result.items || [];
           
-          return {
-            hpas: hpas.map((hpa: any) => ({
-              name: hpa.metadata?.name,
-              namespace: hpa.metadata?.namespace,
-              target: hpa.spec?.scaleTargetRef
-                ? `${hpa.spec.scaleTargetRef.kind}/${hpa.spec.scaleTargetRef.name}`
-                : "unknown",
-              minReplicas: hpa.spec?.minReplicas,
-              maxReplicas: hpa.spec?.maxReplicas,
-              currentReplicas: hpa.status?.currentReplicas,
-              desiredReplicas: hpa.status?.desiredReplicas,
-              conditions: hpa.status?.conditions?.map((c: any) => ({
-                type: c.type,
-                status: c.status,
-                reason: c.reason,
-                message: c.message,
-              })),
-              age: hpa.metadata?.creationTimestamp,
+          const mapped = hpas.map((hpa: any) => ({
+            name: hpa.metadata?.name,
+            namespace: hpa.metadata?.namespace,
+            target: hpa.spec?.scaleTargetRef
+              ? `${hpa.spec.scaleTargetRef.kind}/${hpa.spec.scaleTargetRef.name}`
+              : "unknown",
+            minReplicas: hpa.spec?.minReplicas,
+            maxReplicas: hpa.spec?.maxReplicas,
+            currentReplicas: hpa.status?.currentReplicas,
+            desiredReplicas: hpa.status?.desiredReplicas,
+            conditions: hpa.status?.conditions?.map((c: any) => ({
+              type: c.type,
+              status: c.status,
+              reason: c.reason,
+              message: c.message,
             })),
-            total: hpas.length,
+            age: hpa.metadata?.creationTimestamp,
+            labels: hpa.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            hpas: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
             namespace: namespace || "all",
           };
         } catch (error) {
@@ -3040,11 +3892,24 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the HPA",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "hpa");
           const ns = namespace || "default";
@@ -3056,9 +3921,10 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           
           const hpa = result;
           
-          return {
+          const rawResult = {
             name: hpa.metadata?.name,
             namespace: hpa.metadata?.namespace,
+            creationTimestamp: hpa.metadata?.creationTimestamp,
             target: hpa.spec?.scaleTargetRef,
             minReplicas: hpa.spec?.minReplicas,
             maxReplicas: hpa.spec?.maxReplicas,
@@ -3092,7 +3958,23 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
             annotations: hpa.metadata?.annotations,
             labels: hpa.metadata?.labels,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "HorizontalPodAutoscaler",
+            name,
+            namespace: ns,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `HPA "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_hpa", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -3121,28 +4003,68 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Namespace of the HPA",
               default: "default",
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "hpa");
-          const ns = namespace || "default";
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "HorizontalPodAutoscaler",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
+          }
+
           const rawClient = k8sClient as any;
+          let deleteUrl = `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers/${name}`;
+          const queryParams: string[] = [];
+          if (dryRun === "server") {
+            queryParams.push("dryRun=All");
+          }
+          if (gracePeriodSeconds !== undefined) {
+            queryParams.push(`gracePeriodSeconds=${gracePeriodSeconds}`);
+          }
+          if (propagationPolicy) {
+            queryParams.push(`propagationPolicy=${propagationPolicy}`);
+          }
+          if (queryParams.length > 0) {
+            deleteUrl += `?${queryParams.join("&")}`;
+          }
           
-          await rawClient.rawApiRequest(
-            `/apis/autoscaling/v2/namespaces/${ns}/horizontalpodautoscalers/${name}`,
-            "DELETE"
-          );
+          await rawClient.rawApiRequest(deleteUrl, "DELETE");
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `HPA ${name} deleted from namespace ${ns}`,
             note: "The target deployment will no longer scale automatically. Manual scaling or a new HPA will be needed.",
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_hpa", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "HorizontalPodAutoscaler", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_hpa", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -3182,16 +4104,18 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               type: ["string", "number"],
               description: "Maximum number of pods that can be unavailable (can be number or percentage, e.g., '1')",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "selector"],
         },
       },
-      handler: async ({ name, namespace, selector, minAvailable, maxUnavailable }: { 
+      handler: async ({ name, namespace, selector, minAvailable, maxUnavailable, dryRun }: { 
         name: string;
         namespace?: string;
         selector: Record<string, string>;
         minAvailable?: string | number;
         maxUnavailable?: string | number;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "pdb");
@@ -3221,11 +4145,26 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               ...(maxUnavailable !== undefined ? { maxUnavailable } : {}),
             },
           };
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "PodDisruptionBudget",
+              name,
+              namespace: ns,
+              manifest: pdb,
+            });
+          }
+
+          let url = `/apis/policy/v1/namespaces/${ns}/poddisruptionbudgets`;
+          if (dryRun === "server") {
+            url += "?dryRun=All";
+          }
           
-          const result = await rawClient.rawApiRequest(`/apis/policy/v1/namespaces/${ns}/poddisruptionbudgets`, "POST", pdb);
+          const result = await rawClient.rawApiRequest(url, "POST", pdb);
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `PodDisruptionBudget ${name} created in namespace ${ns}`,
             pdb: {
               name: result.metadata?.name,
@@ -3303,11 +4242,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               items: { type: "string" },
               description: "Environment variables (KEY=VALUE format)",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "image", "serviceName"],
         },
       },
-      handler: async ({ name, image, namespace, replicas, port, serviceName, storageClass, storageSize, command, env }: {
+      handler: async ({ name, image, namespace, replicas, port, serviceName, storageClass, storageSize, command, env, dryRun }: {
         name: string;
         image: string;
         namespace?: string;
@@ -3318,6 +4258,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         storageSize?: string;
         command?: string[];
         env?: string[];
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -3375,11 +4316,22 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               ],
             },
           };
-          
-          const result = await appsApi.createNamespacedStatefulSet({ namespace: ns, body: statefulSet }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "StatefulSet",
+              name,
+              namespace: ns,
+              manifest: statefulSet,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await appsApi.createNamespacedStatefulSet({ namespace: ns, body: statefulSet, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             statefulSet: name,
             namespace: ns,
             serviceName,
@@ -3452,11 +4404,12 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               description: "Use host PID namespace",
               default: false,
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "image"],
         },
       },
-      handler: async ({ name, image, namespace, port, command, env, nodeSelector, hostNetwork, hostPID }: {
+      handler: async ({ name, image, namespace, port, command, env, nodeSelector, hostNetwork, hostPID, dryRun }: {
         name: string;
         image: string;
         namespace?: string;
@@ -3466,6 +4419,7 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
         nodeSelector?: Record<string, string>;
         hostNetwork?: boolean;
         hostPID?: boolean;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         
@@ -3511,11 +4465,22 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
               },
             },
           };
-          
-          const result = await appsApi.createNamespacedDaemonSet({ namespace: ns, body: daemonSet }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "DaemonSet",
+              name,
+              namespace: ns,
+              manifest: daemonSet,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await appsApi.createNamespacedDaemonSet({ namespace: ns, body: daemonSet, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             daemonSet: name,
             namespace: ns,
             image,

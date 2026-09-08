@@ -115,6 +115,8 @@ The MCP server works with any Kubernetes cluster that supports standard kubeconf
 
 5. **Enable metrics-server**: For resource usage metrics (top node, top pod), install metrics-server on your cluster. See [METRICS_SERVER.md](METRICS_SERVER.md) for installation instructions.
 
+6. **Leverage Pre-Flight Dry-Run (`dryRun: 'server'`)**: Before applying mutations, deletions, or scaling on managed clusters (EKS, AKS, GKE), use `dryRun: 'server'` to test whether cloud-specific admission webhooks, Azure Policy, AWS GuardDuty, or GCP Anthos Config Management will reject the request before executing it live.
+
 ## Reporting Issues
 
 If you encounter limitations or issues with specific cloud providers that are not documented here, please:

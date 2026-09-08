@@ -54,7 +54,7 @@ npm run dev  # Runs TypeScript in watch mode
 
 ### Naming Conventions
 
-- **Tool names:** Use `k8s_` prefix for standard Kubernetes tools, `k8s_helm_` for Helm tools, and `mcp_` for server management tools.
+- **Tool names:** Use `k8s_` prefix for standard Kubernetes tools, `k8s_helm_` for Helm tools, and `k8s_server_` for server management tools (`k8s_server_info`, `k8s_server_health`, etc.).
 - **File names:** Use lowercase with hyphens for utilities, camelCase for tool files
 - **Variables:** Use camelCase
 - **Constants:** Use UPPER_SNAKE_CASE
@@ -119,7 +119,15 @@ If the tool performs destructive or modification operations, it must be validate
 
 The server automatically validates every tool call against the current protection mode settings.
 
-### Step 5: Update Documentation
+### Step 5: Adopt Universal Query & Safety Utilities
+
+To preserve architectural consistency across all 269 tools:
+- **GET & LIST Tools**: Enhance schema with `addQueryParameters(schema)` and use `applyQueryParameters(items, args)` from `src/utils/query-helper.ts` to support pagination (`limit`, `continue`), sorting (`sortBy`, `sortOrder`), and multi-format output (`outputFormat: json | yaml`).
+- **DELETE Tools**: Enhance schema with `addDeletionSafetyParameters(schema)` and wrap the handler in `executeWithDeletionSafety(...)` from `src/utils/safety-helper.ts` to support `dryRun`, `gracePeriodSeconds`, `propagationPolicy`, and `ignoreNotFound`.
+- **CREATE Tools**: Enhance schema with `addCreationSafetyParameters(schema)` and wrap in `executeWithCreationSafety(...)` to support `dryRun: 'none' | 'client' | 'server'`.
+- **OPERATIONAL MUTATION Tools**: Enhance schema with `addMutationSafetyParameters(schema)` and wrap in `executeWithMutationSafety(...)` to support pre-flight dry-run execution.
+
+### Step 6: Update Documentation
 
 - Add the tool to `TOOLS_REFERENCE.md`
 - Update the tool count in `README.md`

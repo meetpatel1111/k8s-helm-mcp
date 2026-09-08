@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.29.0] - 2026-09-08
+
+### Added
+- **Pre-Flight Dry-Run Simulation**: Run any creation, modification, or deletion tool with `dryRun: "client"` or `dryRun: "server"`. Test commands safely before changing live cluster state — `server` mode validates against live Kubernetes admission rules, webhooks, and permissions without saving changes.
+- **Universal Query, Sorting & Formatting**: Browse large clusters easily. List tools support result caps (`limit`), server-side filtering (`labelSelector`, `fieldSelector`), and custom sorting (`sortBy` with `descending`); list and get tools support output formatting (`output`: `json`/`yaml`/`name`), field extraction (`subpath`), and `ignoreNotFound`.
+- **Safe Deletions**: Deleting resources is now much safer with customizable shutdown countdowns (`gracePeriodSeconds`), cascade cleanup controls (`propagationPolicy`), and `ignoreNotFound` to avoid errors if a resource is already gone.
+- **Operational Safety**: Safely simulate node actions (cordon, drain, taints), workload updates (scaling, rolling restarts, rollbacks, image updates), and pod restarts before applying them.
+- **Kubernetes v1.37 Support**: Fully tested and verified for compatibility with Kubernetes v1.37.0 and kubectl v1.37.0.
+- **Expanded Test Coverage**: Added comprehensive test suites covering dry-run safety, query operations, and workload mutations (592+ unit tests passing).
+
 ## [0.28.0] - 2026-05-07
 
 ### Added

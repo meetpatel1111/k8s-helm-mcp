@@ -5,6 +5,20 @@ import * as k8s from "@kubernetes/client-node";
 import { classifyError, validateYamlManifest, ErrorContext } from "../error-handling.js";
 import { validateResourceName, validateNamespace } from "../validators.js";
 import { scrubSensitiveData } from "../utils/secret-scrubber.js";
+import {
+  commonDeleteQuerySchema,
+  commonApplyQuerySchema,
+  commonCreateQuerySchema,
+  commonMutationQuerySchema,
+  isClientDryRun,
+  isServerDryRun,
+  formatClientDryRunDelete,
+  formatClientDryRunCreate,
+  formatClientDryRunMutation,
+  handleDeleteError,
+  buildServerDeleteParams,
+  buildServerCreateParams,
+} from "../utils/safety-helper.js";
 
 export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -24,13 +38,33 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Default namespace for resources without namespace specified",
               default: "default",
             },
+            ...commonApplyQuerySchema,
           },
           required: ["manifest"],
         },
       },
-      handler: async ({ manifest, namespace }: { manifest: string; namespace?: string }) => {
+      handler: async ({
+        manifest,
+        namespace,
+        dryRun,
+        fieldManager,
+        forceConflicts,
+        serverSide,
+      }: {
+        manifest: string;
+        namespace?: string;
+        dryRun?: string;
+        fieldManager?: string;
+        forceConflicts?: boolean;
+        serverSide?: boolean;
+      }) => {
         try {
-          const result = await k8sClient.applyManifest(manifest);
+          const result = await k8sClient.applyManifest(manifest, {
+            dryRun,
+            fieldManager,
+            forceConflicts,
+            serverSide,
+          });
           return {
             success: true,
             applied: result,
@@ -420,11 +454,12 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               type: "object",
               description: "Labels to apply to the namespace",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, labels }: { name: string; labels?: Record<string, string> }) => {
+      handler: async ({ name, labels, dryRun }: { name: string; labels?: Record<string, string>; dryRun?: string }) => {
         try {
           validateResourceName(name, "namespace");
           const coreApi = k8sClient.getCoreV1Api();
@@ -438,9 +473,19 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
             },
           };
 
-          const result = await coreApi.createNamespace({ body: namespace });
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Namespace",
+              name,
+              manifest: namespace,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespace({ body: namespace, ...createParams });
           return {
             success: true,
+            dryRun: dryRun || "none",
             name: result.metadata?.name,
             message: `Namespace ${name} created successfully`,
           };
@@ -472,13 +517,38 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Force delete (remove finalizers)",
               default: false,
             },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, force }: { name: string; force?: boolean }) => {
+      handler: async ({
+        name,
+        force,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: {
+        name: string;
+        force?: boolean;
+        dryRun?: string;
+        gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "namespace");
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Namespace",
+              name,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
+          }
+
           const coreApi = k8sClient.getCoreV1Api();
           
           if (force) {
@@ -495,12 +565,16 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
             } as any);
           }
           
-          await coreApi.deleteNamespace({ name });
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await coreApi.deleteNamespace({ name, ...deleteParams });
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Namespace ${name} deletion initiated`,
           };
         } catch (error) {
+          const handled = handleDeleteError(error, { kind: "Namespace", name, ignoreNotFound });
+          if (handled) return handled;
           const context: ErrorContext = { operation: "k8s_delete_namespace", resource: name };
           const classified = classifyError(error, context);
           return {
@@ -770,18 +844,20 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               type: "string",
               description: "Modified YAML/JSON manifest to apply (omit to fetch current state)",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name"],
         },
       },
-      handler: async ({ resource, name, namespace, manifest }: { 
-        resource: string; 
-        name: string; 
+      handler: async ({ resource, name, namespace, manifest, dryRun }: {
+        resource: string;
+        name: string;
         namespace?: string;
         manifest?: string;
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
-        
+
         try {
           // If no manifest provided, return current resource for editing
           if (!manifest) {
@@ -900,10 +976,11 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
           }
           
           // Apply the changes
-          const result = await k8sClient.applyManifest(manifest);
-          
+          const result = await k8sClient.applyManifest(manifest, { dryRun });
+
           return {
             step: "apply",
+            dryRun: dryRun || "none",
             resource: `${resource}/${name}`,
             namespace: ns,
             result,
@@ -1168,35 +1245,51 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Namespace of the ConfigMap",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
         try {
-          const coreApi = k8sClient.getCoreV1Api();
           const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "ConfigMap",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await coreApi.deleteNamespacedConfigMap({ name, namespace: ns, ...options }, {});
+
+          const coreApi = k8sClient.getCoreV1Api();
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await coreApi.deleteNamespacedConfigMap({ name, namespace: ns, ...deleteParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ConfigMap ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
+          const handled = handleDeleteError(error, { kind: "ConfigMap", name, namespace, ignoreNotFound });
+          if (handled) return handled;
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
             success: false,
@@ -1222,35 +1315,51 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Namespace of the Secret",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
         try {
-          const coreApi = k8sClient.getCoreV1Api();
           const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Secret",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await coreApi.deleteNamespacedSecret({ name, namespace: ns, ...options }, {});
+
+          const coreApi = k8sClient.getCoreV1Api();
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await coreApi.deleteNamespacedSecret({ name, namespace: ns, ...deleteParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Secret ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
+          const handled = handleDeleteError(error, { kind: "Secret", name, namespace, ignoreNotFound });
+          if (handled) return handled;
           const errorMessage = error instanceof Error ? error.message : String(error);
           return {
             success: false,
@@ -1294,16 +1403,18 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Prevent updates to this ConfigMap",
               default: false,
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, data, fromLiteral, immutable }: { 
+      handler: async ({ name, namespace, data, fromLiteral, immutable, dryRun }: { 
         name: string; 
         namespace?: string;
         data?: Record<string, string>;
         fromLiteral?: Record<string, string>;
         immutable?: boolean;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "configmap");
@@ -1323,11 +1434,22 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
             data: Object.keys(mergedData).length > 0 ? mergedData : undefined,
             immutable,
           };
-          
-          const result = await coreApi.createNamespacedConfigMap({ namespace: ns, body: configMap }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "ConfigMap",
+              name,
+              namespace: ns,
+              manifest: configMap,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedConfigMap({ namespace: ns, body: configMap, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `ConfigMap ${name} created in namespace ${ns}`,
             configMap: {
               name: result.metadata?.name,
@@ -1413,12 +1535,13 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Prevent updates to this Secret",
               default: false,
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name"],
         },
       },
       handler: async ({ 
-        name, namespace, type, data, stringData, dockerServer, dockerUsername, dockerPassword, dockerEmail, cert, key, immutable 
+        name, namespace, type, data, stringData, dockerServer, dockerUsername, dockerPassword, dockerEmail, cert, key, immutable, dryRun 
       }: { 
         name: string; 
         namespace?: string;
@@ -1432,6 +1555,7 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
         cert?: string;
         key?: string;
         immutable?: boolean;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "secret");
@@ -1487,11 +1611,22 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
             data: Object.keys(secretData).length > 0 ? secretData : undefined,
             immutable,
           };
-          
-          const result = await coreApi.createNamespacedSecret({ namespace: ns, body: secret }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Secret",
+              name,
+              namespace: ns,
+              manifest: secret,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedSecret({ namespace: ns, body: secret, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Secret ${name} created in namespace ${ns}`,
             secret: {
               name: result.metadata?.name,
@@ -1539,15 +1674,17 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               description: "Must be 'background', 'orphan', or 'foreground'",
               default: "background",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["manifest"],
         },
       },
-      handler: async ({ manifest, force, namespace, cascade }: { 
+      handler: async ({ manifest, force, namespace, cascade, dryRun }: {
         manifest: string;
         force?: boolean;
         namespace?: string;
         cascade?: string;
+        dryRun?: string;
       }) => {
         try {
           // Parse manifest
@@ -1606,24 +1743,40 @@ export function registerConfigTools(k8sClient: K8sClient): { tool: Tool; handler
               error: `${kind}/${name} not found in namespace ${ns}. Use k8s_apply_manifest to create new resources.`,
             };
           }
-          
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Replace resource (delete + recreate)",
+              kind,
+              name,
+              namespace: ns,
+              patch: resource,
+              details: { cascade: cascade || "Background", force: !!force },
+            });
+          }
+
+          const serverDryRun = isServerDryRun(dryRun);
+
           // Delete the existing resource
           const deleteOptions = {
             apiVersion: "v1",
             kind: "DeleteOptions",
             propagationPolicy: cascade || "Background",
           };
-          await rawClient.rawApiRequest(apiPath, "DELETE", deleteOptions);
-          
-          // Wait a moment for deletion to process
-          await new Promise(r => setTimeout(r, 1000));
-          
+          await rawClient.rawApiRequest(serverDryRun ? `${apiPath}?dryRun=All` : apiPath, "DELETE", deleteOptions);
+
+          // Wait a moment for deletion to process (skip under server dry-run — nothing is actually deleted)
+          if (!serverDryRun) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+
           // Create the new resource
-          const createPath = apiPath.replace(`/${name}`, "");
-          const result = await rawClient.rawApiRequest(createPath, "POST", resource);
-          
+          const basePath = apiPath.replace(`/${name}`, "");
+          const result = await rawClient.rawApiRequest(serverDryRun ? `${basePath}?dryRun=All` : basePath, "POST", resource);
+
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `${kind}/${name} replaced in namespace ${ns}`,
             replaced: true,
             resource: {
@@ -1933,16 +2086,18 @@ ${k8s.dumpYaml(converted)}
               description: "Create the annotation if it doesn't exist",
               default: true,
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "manifest"],
         },
       },
-      handler: async ({ resource, name, namespace, manifest, createAnnotation }: { 
+      handler: async ({ resource, name, namespace, manifest, createAnnotation, dryRun }: {
         resource: string;
         name: string;
         namespace?: string;
         manifest: string;
         createAnnotation?: boolean;
+        dryRun?: string;
       }) => {
         try {
           const rawClient = k8sClient as any;
@@ -2009,13 +2164,25 @@ ${k8s.dumpYaml(converted)}
               },
             },
           };
-          
-          await rawClient.rawApiRequest(apiPath, "PATCH", patch, undefined, undefined, undefined, { 
-            headers: { "Content-Type": "application/strategic-merge-patch+json" } 
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Set last-applied-configuration",
+              kind: resource,
+              name,
+              namespace: ns,
+              patch,
+            });
+          }
+
+          const patchPath = isServerDryRun(dryRun) ? `${apiPath}?dryRun=All` : apiPath;
+          await rawClient.rawApiRequest(patchPath, "PATCH", patch, undefined, undefined, undefined, {
+            headers: { "Content-Type": "application/strategic-merge-patch+json" }
           });
-          
+
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Set last-applied-configuration for ${resource}/${name}`,
             resource: `${resource}/${name}`,
             namespace: ns,

@@ -3,6 +3,12 @@ import { K8sClient } from "../k8s-client.js";
 import * as k8s from "@kubernetes/client-node";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName } from "../validators.js";
+import { commonListQuerySchema, applySortAndLimit } from "../utils/query-helper.js";
+import {
+  commonCreateQuerySchema,
+  isClientDryRun,
+  formatClientDryRunCreate,
+} from "../utils/safety-helper.js";
 
 export function registerClusterTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -199,19 +205,38 @@ export function registerClusterTools(k8sClient: K8sClient): { tool: Tool; handle
         description: "List all namespaces in the cluster",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            ...commonListQuerySchema,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({
+        labelSelector,
+        fieldSelector,
+        sortBy,
+        descending,
+        limit,
+      }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
-          const namespaces = await k8sClient.listNamespaces();
+          const namespaces = await k8sClient.listNamespaces({ labelSelector, fieldSelector });
+          const mapped = namespaces.map((ns) => ({
+            name: ns.metadata?.name,
+            status: ns.status?.phase,
+            created: ns.metadata?.creationTimestamp,
+            labels: ns.metadata?.labels,
+          }));
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
           return {
-            namespaces: namespaces.map((ns) => ({
-              name: ns.metadata?.name,
-              status: ns.status?.phase,
-              created: ns.metadata?.creationTimestamp,
-              labels: ns.metadata?.labels,
-            })),
+            namespaces: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const errorContext: ErrorContext = { operation: "k8s_list_namespaces" };
@@ -568,16 +593,18 @@ export function registerClusterTools(k8sClient: K8sClient): { tool: Tool; handle
               enum: ["Never", "PreemptLowerPriority"],
               default: "PreemptLowerPriority",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "value"],
         },
       },
-      handler: async ({ name, value, description, globalDefault, preemptionPolicy }: { 
+      handler: async ({ name, value, description, globalDefault, preemptionPolicy, dryRun }: { 
         name: string;
         value: number;
         description?: string;
         globalDefault?: boolean;
         preemptionPolicy?: string;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "priorityclass");
@@ -595,11 +622,25 @@ export function registerClusterTools(k8sClient: K8sClient): { tool: Tool; handle
             preemptionPolicy: preemptionPolicy || "PreemptLowerPriority",
             description: description || "",
           };
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "PriorityClass",
+              name,
+              manifest: priorityClass,
+            });
+          }
+
+          let url = "/apis/scheduling.k8s.io/v1/priorityclasses";
+          if (dryRun === "server") {
+            url += "?dryRun=All";
+          }
           
-          const result = await rawClient.rawApiRequest("/apis/scheduling.k8s.io/v1/priorityclasses", { method: "POST", body: priorityClass });
+          const result = await rawClient.rawApiRequest(url, { method: "POST", body: priorityClass });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `PriorityClass ${name} created with value ${value}`,
             priorityClass: {
               name: result.metadata?.name,
@@ -749,26 +790,51 @@ export function registerClusterTools(k8sClient: K8sClient): { tool: Tool; handle
         description: "List RuntimeClasses in the cluster (like kubectl get runtimeclass)",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            ...commonListQuerySchema,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({
+        labelSelector,
+        fieldSelector,
+        sortBy,
+        descending,
+        limit,
+      }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           const rawClient = k8sClient as any;
-          const result = await rawClient.rawApiRequest("/apis/node.k8s.io/v1/runtimeclasses");
+          let path = "/apis/node.k8s.io/v1/runtimeclasses";
+          const params = new URLSearchParams();
+          if (labelSelector) params.append("labelSelector", labelSelector);
+          if (fieldSelector) params.append("fieldSelector", fieldSelector);
+          const qs = params.toString();
+          if (qs) path += `?${qs}`;
+          const result = await rawClient.rawApiRequest(path);
           
           const runtimeClasses = result.items || [];
+          const mapped = runtimeClasses.map((rc: any) => ({
+            name: rc.metadata?.name,
+            handler: rc.handler,
+            description: rc.description,
+            podOverhead: rc.overhead,
+            scheduling: rc.scheduling,
+            created: rc.metadata?.creationTimestamp,
+            labels: rc.metadata?.labels,
+          }));
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
           
           return {
-            runtimeClasses: runtimeClasses.map((rc: any) => ({
-              name: rc.metadata?.name,
-              handler: rc.handler,
-              description: rc.description,
-              podOverhead: rc.overhead,
-              scheduling: rc.scheduling,
-              created: rc.metadata?.creationTimestamp,
-            })),
-            total: runtimeClasses.length,
+            runtimeClasses: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_runtimeclasses" };
@@ -794,33 +860,57 @@ export function registerClusterTools(k8sClient: K8sClient): { tool: Tool; handle
               type: "string",
               description: "Namespace (default: all namespaces)",
             },
+            ...commonListQuerySchema,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({
+        namespace,
+        labelSelector,
+        fieldSelector,
+        sortBy,
+        descending,
+        limit,
+      }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           const rawClient = k8sClient as any;
-          let result;
-          
-          if (namespace) {
-            result = await rawClient.rawApiRequest(`/apis/coordination.k8s.io/v1/namespaces/${namespace}/leases`);
-          } else {
-            result = await rawClient.rawApiRequest("/apis/coordination.k8s.io/v1/leases");
-          }
+          let path = namespace
+            ? `/apis/coordination.k8s.io/v1/namespaces/${namespace}/leases`
+            : `/apis/coordination.k8s.io/v1/leases`;
+          const params = new URLSearchParams();
+          if (labelSelector) params.append("labelSelector", labelSelector);
+          if (fieldSelector) params.append("fieldSelector", fieldSelector);
+          const qs = params.toString();
+          if (qs) path += `?${qs}`;
+          const result = await rawClient.rawApiRequest(path);
           
           const leases = result.items || [];
+          const mapped = leases.map((lease: any) => ({
+            name: lease.metadata?.name,
+            namespace: lease.metadata?.namespace,
+            holder: lease.spec?.holderIdentity,
+            duration: lease.spec?.leaseDurationSeconds,
+            acquired: lease.spec?.acquireTime,
+            renewed: lease.spec?.renewTime,
+            transitions: lease.spec?.leaseTransitions,
+            created: lease.metadata?.creationTimestamp,
+            labels: lease.metadata?.labels,
+          }));
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
           
           return {
-            leases: leases.map((lease: any) => ({
-              name: lease.metadata?.name,
-              namespace: lease.metadata?.namespace,
-              holder: lease.spec?.holderIdentity,
-              duration: lease.spec?.leaseDurationSeconds,
-              acquired: lease.spec?.acquireTime,
-              renewed: lease.spec?.renewTime,
-              transitions: lease.spec?.leaseTransitions,
-            })),
-            total: leases.length,
+            leases: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_leases", namespace };

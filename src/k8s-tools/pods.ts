@@ -5,6 +5,19 @@ import * as yaml from "js-yaml";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName, validateNamespace, validateLabelSelector } from "../validators.js";
 import { scrubSensitiveData } from "../utils/secret-scrubber.js";
+import { commonListQuerySchema, commonGetQuerySchema, applySortAndLimit, applyGetFormatting, isNotFoundError } from "../utils/query-helper.js";
+import {
+  commonDeleteQuerySchema,
+  commonMutationQuerySchema,
+  commonCreateQuerySchema,
+  isClientDryRun,
+  formatClientDryRunDelete,
+  formatClientDryRunMutation,
+  formatClientDryRunCreate,
+  handleDeleteError,
+  buildServerDeleteParams,
+  buildServerCreateParams,
+} from "../utils/safety-helper.js";
 
 export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -19,14 +32,11 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               type: "string",
               description: "Namespace to filter by (optional, shows all if not specified)",
             },
-            labelSelector: {
-              type: "string",
-              description: "Label selector to filter pods",
-            },
-            fieldSelector: {
-              type: "string",
-              description: "Field selector to filter pods",
-            },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
             context: {
               type: "string",
               description: "Kubernetes context to use (from kubeconfig). Uses current context if not specified",
@@ -34,10 +44,13 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
           },
         },
       },
-      handler: async ({ namespace, labelSelector, fieldSelector, context }: { 
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit, context }: { 
         namespace?: string; 
         labelSelector?: string;
         fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
         context?: string;
       }) => {
         try {
@@ -89,9 +102,13 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
             };
           });
 
+          const queryResult = applySortAndLimit(pods, { sortBy, descending, limit });
+
           return { 
-            pods,
-            total: pods.length,
+            pods: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
             namespace: namespace || "all",
           };
         } catch (error) {
@@ -121,86 +138,119 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               description: "Namespace of the pod",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
-        const pod = await k8sClient.getPod(name, namespace || "default");
-        const containerStatuses = pod.status?.containerStatuses || [];
-        const initContainerStatuses = pod.status?.initContainerStatuses || [];
-        
-        return {
-          metadata: {
-            name: pod.metadata?.name,
-            namespace: pod.metadata?.namespace,
-            labels: pod.metadata?.labels,
-            annotations: pod.metadata?.annotations,
-            creationTimestamp: pod.metadata?.creationTimestamp,
-            uid: pod.metadata?.uid,
-          },
-          spec: {
-            nodeName: pod.spec?.nodeName,
-            serviceAccount: pod.spec?.serviceAccountName,
-            restartPolicy: pod.spec?.restartPolicy,
-            dnsPolicy: pod.spec?.dnsPolicy,
-            hostNetwork: pod.spec?.hostNetwork,
-            securityContext: pod.spec?.securityContext,
-            schedulerName: pod.spec?.schedulerName,
-            priority: pod.spec?.priority,
-            terminationGracePeriodSeconds: pod.spec?.terminationGracePeriodSeconds,
-          },
-          status: {
-            phase: pod.status?.phase,
-            conditions: pod.status?.conditions?.map((c: k8s.V1PodCondition) => ({
-              type: c.type,
-              status: c.status,
-              reason: c.reason,
-              message: c.message,
-              lastTransitionTime: c.lastTransitionTime,
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
+        try {
+          const pod = await k8sClient.getPod(name, namespace || "default");
+          const containerStatuses = pod.status?.containerStatuses || [];
+          const initContainerStatuses = pod.status?.initContainerStatuses || [];
+          
+          const rawResult = {
+            metadata: {
+              name: pod.metadata?.name,
+              namespace: pod.metadata?.namespace,
+              labels: pod.metadata?.labels,
+              annotations: pod.metadata?.annotations,
+              creationTimestamp: pod.metadata?.creationTimestamp,
+              uid: pod.metadata?.uid,
+            },
+            spec: {
+              nodeName: pod.spec?.nodeName,
+              serviceAccount: pod.spec?.serviceAccountName,
+              restartPolicy: pod.spec?.restartPolicy,
+              dnsPolicy: pod.spec?.dnsPolicy,
+              hostNetwork: pod.spec?.hostNetwork,
+              securityContext: pod.spec?.securityContext,
+              schedulerName: pod.spec?.schedulerName,
+              priority: pod.spec?.priority,
+              terminationGracePeriodSeconds: pod.spec?.terminationGracePeriodSeconds,
+            },
+            status: {
+              phase: pod.status?.phase,
+              conditions: pod.status?.conditions?.map((c: k8s.V1PodCondition) => ({
+                type: c.type,
+                status: c.status,
+                reason: c.reason,
+                message: c.message,
+                lastTransitionTime: c.lastTransitionTime,
+              })),
+              hostIP: pod.status?.hostIP,
+              podIP: pod.status?.podIP,
+              startTime: pod.status?.startTime,
+              qosClass: pod.status?.qosClass,
+            },
+            containers: pod.spec?.containers.map((c: k8s.V1Container) => ({
+              name: c.name,
+              image: c.image,
+              command: c.command,
+              args: c.args,
+              ports: c.ports,
+              resources: c.resources,
+              volumeMounts: c.volumeMounts,
+              livenessProbe: c.livenessProbe ? { configured: true } : undefined,
+              readinessProbe: c.readinessProbe ? { configured: true } : undefined,
+              startupProbe: c.startupProbe ? { configured: true } : undefined,
             })),
-            hostIP: pod.status?.hostIP,
-            podIP: pod.status?.podIP,
-            startTime: pod.status?.startTime,
-            qosClass: pod.status?.qosClass,
-          },
-          containers: pod.spec?.containers.map((c: k8s.V1Container) => ({
-            name: c.name,
-            image: c.image,
-            command: c.command,
-            args: c.args,
-            ports: c.ports,
-            resources: c.resources,
-            volumeMounts: c.volumeMounts,
-            livenessProbe: c.livenessProbe ? { configured: true } : undefined,
-            readinessProbe: c.readinessProbe ? { configured: true } : undefined,
-            startupProbe: c.startupProbe ? { configured: true } : undefined,
-          })),
-          initContainers: pod.spec?.initContainers?.map((c: k8s.V1Container) => ({
-            name: c.name,
-            image: c.image,
-          })),
-          containerStatuses: containerStatuses.map((c: k8s.V1ContainerStatus) => ({
-            name: c.name,
-            ready: c.ready,
-            restartCount: c.restartCount,
-            state: c.state,
-            lastState: c.lastState,
-            image: c.image,
-            imageID: c.imageID,
-            started: c.started,
-          })),
-          initContainerStatuses: initContainerStatuses.map((c: k8s.V1ContainerStatus) => ({
-            name: c.name,
-            ready: c.ready,
-            restartCount: c.restartCount,
-            state: c.state,
-          })),
-          volumes: pod.spec?.volumes?.map((v: k8s.V1Volume) => ({
-            name: v.name,
-            type: Object.keys(v).find((k) => k !== "name") || "unknown",
-          })),
-        };
+            initContainers: pod.spec?.initContainers?.map((c: k8s.V1Container) => ({
+              name: c.name,
+              image: c.image,
+            })),
+            containerStatuses: containerStatuses.map((c: k8s.V1ContainerStatus) => ({
+              name: c.name,
+              ready: c.ready,
+              restartCount: c.restartCount,
+              state: c.state,
+              lastState: c.lastState,
+              image: c.image,
+              imageID: c.imageID,
+              started: c.started,
+            })),
+            initContainerStatuses: initContainerStatuses.map((c: k8s.V1ContainerStatus) => ({
+              name: c.name,
+              ready: c.ready,
+              restartCount: c.restartCount,
+              state: c.state,
+            })),
+            volumes: pod.spec?.volumes?.map((v: k8s.V1Volume) => ({
+              name: v.name,
+              type: Object.keys(v).find((k) => k !== "name") || "unknown",
+            })),
+          };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Pod",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
+        } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Pod "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
+          throw error;
+        }
       },
     },
     {
@@ -1223,27 +1273,50 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               description: "Namespace of the pod",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
         try {
           validateResourceName(name, "pod");
-          await k8sClient.deletePod(name, namespace || "default");
+          const ns = namespace || "default";
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Pod",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
+          }
+
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await k8sClient.deletePod(name, ns, deleteParams);
           return { 
             success: true, 
-            message: `Pod ${name} in namespace ${namespace || "default"} deleted` 
+            dryRun: dryRun || "none",
+            message: `Pod ${name} in namespace ${ns} deleted` 
           };
         } catch (error) {
+          const handled = handleDeleteError(error, { kind: "Pod", name, namespace, ignoreNotFound });
+          if (handled) return handled;
           const context: ErrorContext = { operation: "k8s_delete_pod", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -1425,11 +1498,12 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               description: "Namespace of the pod",
               default: "default",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({ name, namespace, dryRun }: { name: string; namespace?: string; dryRun?: string }) => {
         try {
           const ns = namespace || "default";
           validateResourceName(name, "pod");
@@ -1437,11 +1511,26 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
         
           // Check if pod has owner references (controller)
           const hasController = (pod.metadata?.ownerReferences?.length || 0) > 0;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Restart pod",
+              kind: "Pod",
+              name,
+              namespace: ns,
+              details: {
+                hasController,
+                ownerReferences: pod.metadata?.ownerReferences,
+                recreationExpected: hasController,
+              },
+            });
+          }
         
-          await k8sClient.deletePod(name, ns);
+          await k8sClient.deletePod(name, ns, { dryRun: dryRun === "server" ? "All" : undefined });
         
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: hasController 
               ? `Pod ${name} deleted. It will be recreated by its controller.`
               : `Pod ${name} deleted. Note: This pod has no controller and will not be recreated automatically.`,
@@ -1707,11 +1796,7 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               type: "string",
               description: "ServiceAccount to use",
             },
-            dryRun: {
-              type: "string",
-              description: "Dry run mode (client or server)",
-              enum: ["client", "server"],
-            },
+            ...commonCreateQuerySchema,
             output: {
               type: "string",
               description: "Output format for dry-run",
@@ -1787,20 +1872,20 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
           };
           
           // Handle dry-run mode
-          if (dryRun === "client") {
+          if (isClientDryRun(dryRun)) {
             return {
-              dryRun: true,
-              pod: podName,
+              ...formatClientDryRunCreate({ kind: "Pod", name: podName, namespace: ns, manifest: pod }),
               manifest: output === "json" ? JSON.stringify(pod, null, 2) : yaml.dump(pod),
-              message: `Dry-run: would create pod ${podName}`,
             };
           }
-          
+
           const coreApi = k8sClient.getCoreV1Api();
-          const result = await coreApi.createNamespacedPod({ namespace: ns, body: pod });
-          
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedPod({ namespace: ns, body: pod, ...createParams });
+
           return {
             success: true,
+            dryRun: dryRun || "none",
             pod: podName,
             namespace: ns,
             image,
@@ -1918,15 +2003,17 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               description: "Command to run",
               default: ["sh"],
             },
+            ...commonCreateQuerySchema,
           },
           required: ["node"],
         },
       },
-      handler: async ({ node, image, namespace, command }: { 
-        node: string; 
-        image?: string; 
-        namespace?: string; 
+      handler: async ({ node, image, namespace, command, dryRun }: {
+        node: string;
+        image?: string;
+        namespace?: string;
         command?: string[];
+        dryRun?: string;
       }) => {
         const ns = namespace || "default";
         const debugPodName = `node-debug-${node}-${Date.now().toString(36)}`.toLowerCase().replace(/[^a-z0-9-]/g, "").substring(0, 63);
@@ -1973,11 +2060,26 @@ export function registerPodTools(k8sClient: K8sClient): { tool: Tool; handler: F
               restartPolicy: "Never",
             },
           };
-          
-          const result = await coreApi.createNamespacedPod({ namespace: ns, body: debugPod });
-          
+
+          if (isClientDryRun(dryRun)) {
+            return {
+              ...formatClientDryRunCreate({ kind: "Pod", name: debugPodName, namespace: ns, manifest: debugPod }),
+              node,
+              warnings: [
+                "This pod runs in privileged mode",
+                "Has access to host filesystem at /host",
+                "Shares host network, PID, and IPC namespaces",
+                "Delete when debugging is complete",
+              ],
+            };
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedPod({ namespace: ns, body: debugPod, ...createParams });
+
           return {
             success: true,
+            dryRun: dryRun || "none",
             debugPod: debugPodName,
             node,
             namespace: ns,

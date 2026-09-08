@@ -3,6 +3,20 @@ import { K8sClient } from "../k8s-client.js";
 import * as k8s from "@kubernetes/client-node";
 import { classifyError, ErrorContext } from "../error-handling.js";
 import { validateResourceName, validateNamespace, validatePort } from "../validators.js";
+import { commonListQuerySchema, commonGetQuerySchema, applySortAndLimit, applyGetFormatting, isNotFoundError } from "../utils/query-helper.js";
+import {
+  commonDeleteQuerySchema,
+  commonCreateQuerySchema,
+  commonMutationQuerySchema,
+  isClientDryRun,
+  formatClientDryRunDelete,
+  formatClientDryRunCreate,
+  formatClientDryRunMutation,
+  handleDeleteError,
+  buildServerDeleteParams,
+  buildServerCreateParams,
+  buildServerMutationParams,
+} from "../utils/safety-helper.js";
 
 export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; handler: Function }[] {
   return [
@@ -17,31 +31,52 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const services = await k8sClient.listServices(namespace);
-          return {
-            services: services.map((svc: k8s.V1Service) => ({
-              name: svc.metadata?.name,
-              namespace: svc.metadata?.namespace,
-              type: svc.spec?.type,
-              clusterIP: svc.spec?.clusterIP,
-              externalIPs: svc.spec?.externalIPs,
-              externalName: svc.spec?.externalName,
-              ports: svc.spec?.ports?.map((p: k8s.V1ServicePort) => ({
-                name: p.name,
-                port: p.port,
-                targetPort: p.targetPort,
-                protocol: p.protocol,
-                nodePort: p.nodePort,
-              })),
-              selector: svc.spec?.selector,
-              sessionAffinity: svc.spec?.sessionAffinity,
-              age: svc.metadata?.creationTimestamp,
+          const services = await k8sClient.listServices(namespace, { labelSelector, fieldSelector });
+          const mapped = services.map((svc: k8s.V1Service) => ({
+            name: svc.metadata?.name,
+            namespace: svc.metadata?.namespace,
+            type: svc.spec?.type,
+            clusterIP: svc.spec?.clusterIP,
+            externalIPs: svc.spec?.externalIPs,
+            externalName: svc.spec?.externalName,
+            ports: svc.spec?.ports?.map((p: k8s.V1ServicePort) => ({
+              name: p.name,
+              port: p.port,
+              targetPort: p.targetPort,
+              protocol: p.protocol,
+              nodePort: p.nodePort,
             })),
+            selector: svc.spec?.selector,
+            sessionAffinity: svc.spec?.sessionAffinity,
+            age: svc.metadata?.creationTimestamp,
+            labels: svc.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            services: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_services", namespace };
@@ -72,11 +107,24 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the Service",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "service");
           const coreApi = k8sClient.getCoreV1Api();
@@ -86,9 +134,12 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
           ]);
           const svc = svcResult;
 
-          return {
+          const rawResult = {
             name: svc.metadata?.name,
             namespace: svc.metadata?.namespace,
+            labels: svc.metadata?.labels,
+            annotations: svc.metadata?.annotations,
+            creationTimestamp: svc.metadata?.creationTimestamp,
             type: svc.spec?.type,
             clusterIP: svc.spec?.clusterIP,
             externalIPs: svc.spec?.externalIPs,
@@ -126,7 +177,23 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               })),
             })) || [],
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Service",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Service "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_service", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -154,11 +221,24 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the service",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "service");
           const coreApi = k8sClient.getCoreV1Api();
@@ -167,10 +247,13 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
             coreApi.readNamespacedEndpoints({ name, namespace: namespace || "default" }).catch(() => null),
           ]);
 
-          return {
+          const rawResult = {
             service: {
               name: service.metadata?.name,
               namespace: service.metadata?.namespace,
+              labels: service.metadata?.labels,
+              annotations: service.metadata?.annotations,
+              creationTimestamp: service.metadata?.creationTimestamp,
               selector: service.spec?.selector,
               ports: service.spec?.ports,
             },
@@ -194,7 +277,23 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
             totalEndpoints: endpoints?.subsets?.reduce((sum: number, s: k8s.V1EndpointSubset) => 
               sum + (s.addresses?.length || 0), 0) || 0,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Endpoints",
+            name,
+            namespace: namespace || "default",
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Endpoints for service "${name}" not found in namespace "${namespace || "default"}"`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_service_endpoints", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -217,36 +316,57 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const ingresses = await k8sClient.listIngresses(namespace);
-          return {
-            ingresses: ingresses.map((ing: k8s.V1Ingress) => ({
-              name: ing.metadata?.name,
-              namespace: ing.metadata?.namespace,
-              class: ing.spec?.ingressClassName,
-              rules: ing.spec?.rules?.map((rule: k8s.V1IngressRule) => ({
-                host: rule.host,
-                paths: rule.http?.paths?.map((path: k8s.V1HTTPIngressPath) => ({
-                  path: path.path,
-                  pathType: path.pathType,
-                  serviceName: path.backend?.service?.name,
-                  servicePort: path.backend?.service?.port?.number || path.backend?.service?.port?.name,
-                })),
+          const ingresses = await k8sClient.listIngresses(namespace, { labelSelector, fieldSelector });
+          const mapped = ingresses.map((ing: k8s.V1Ingress) => ({
+            name: ing.metadata?.name,
+            namespace: ing.metadata?.namespace,
+            class: ing.spec?.ingressClassName,
+            rules: ing.spec?.rules?.map((rule: k8s.V1IngressRule) => ({
+              host: rule.host,
+              paths: rule.http?.paths?.map((path: k8s.V1HTTPIngressPath) => ({
+                path: path.path,
+                pathType: path.pathType,
+                serviceName: path.backend?.service?.name,
+                servicePort: path.backend?.service?.port?.number || path.backend?.service?.port?.name,
               })),
-              tls: ing.spec?.tls?.map((tls: k8s.V1IngressTLS) => ({
-                hosts: tls.hosts,
-                secretName: tls.secretName,
-              })),
-              loadBalancer: ing.status?.loadBalancer?.ingress?.map((lb: k8s.V1LoadBalancerIngress) => ({
-                ip: lb.ip,
-                hostname: lb.hostname,
-              })),
-              age: ing.metadata?.creationTimestamp,
             })),
+            tls: ing.spec?.tls?.map((tls: k8s.V1IngressTLS) => ({
+              hosts: tls.hosts,
+              secretName: tls.secretName,
+            })),
+            loadBalancer: ing.status?.loadBalancer?.ingress?.map((lb: k8s.V1LoadBalancerIngress) => ({
+              ip: lb.ip,
+              hostname: lb.hostname,
+            })),
+            age: ing.metadata?.creationTimestamp,
+            labels: ing.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            ingresses: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_ingresses", namespace };
@@ -271,26 +391,47 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Namespace to filter",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace }: { namespace?: string }) => {
+      handler: async ({ namespace, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
-          const netApi = (k8sClient as any).kc.makeApiClient(k8s.NetworkingV1Api);
+          const netApi = k8sClient.getNetworkingV1Api();
           const response = namespace
-            ? await netApi.listNamespacedNetworkPolicy({ namespace })
-            : await netApi.listNetworkPolicyForAllNamespaces();
+            ? await netApi.listNamespacedNetworkPolicy({ namespace, labelSelector, fieldSelector })
+            : await netApi.listNetworkPolicyForAllNamespaces({ labelSelector, fieldSelector });
           
+          const mapped = response.items.map((np: k8s.V1NetworkPolicy) => ({
+            name: np.metadata?.name,
+            namespace: np.metadata?.namespace,
+            podSelector: np.spec?.podSelector,
+            policyTypes: np.spec?.policyTypes,
+            ingressRules: np.spec?.ingress?.length || 0,
+            egressRules: np.spec?.egress?.length || 0,
+            age: np.metadata?.creationTimestamp,
+            labels: np.metadata?.labels,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            networkPolicies: response.items.map((np: k8s.V1NetworkPolicy) => ({
-              name: np.metadata?.name,
-              namespace: np.metadata?.namespace,
-              podSelector: np.spec?.podSelector,
-              policyTypes: np.spec?.policyTypes,
-              ingressRules: np.spec?.ingress?.length || 0,
-              egressRules: np.spec?.egress?.length || 0,
-              age: np.metadata?.creationTimestamp,
-            })),
+            networkPolicies: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_network_policies", namespace };
@@ -321,17 +462,30 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the Ingress",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "ingress");
           const netApi = (k8sClient as any).kc.makeApiClient(k8s.NetworkingV1Api);
           const ing = await netApi.readNamespacedIngress({ name, namespace: namespace || "default" });
 
-          return {
+          const rawResult = {
             name: ing.metadata?.name,
             namespace: ing.metadata?.namespace,
             ingressClassName: ing.spec?.ingressClassName,
@@ -358,7 +512,23 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
             },
             annotations: ing.metadata?.annotations,
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "Ingress",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `Ingress '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_ingress", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -387,18 +557,31 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the NetworkPolicy",
               default: "default",
             },
+            ...commonGetQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace }: { name: string; namespace?: string }) => {
+      handler: async ({
+        name,
+        namespace,
+        output,
+        subpath,
+        ignoreNotFound,
+      }: {
+        name: string;
+        namespace?: string;
+        output?: string;
+        subpath?: string;
+        ignoreNotFound?: boolean;
+      }) => {
         try {
           validateResourceName(name, "networkpolicy");
           const netApi = (k8sClient as any).kc.makeApiClient(k8s.NetworkingV1Api);
           const result = await netApi.readNamespacedNetworkPolicy({ name, namespace: namespace || "default" });
           const np = result;
 
-          return {
+          const rawResult = {
             name: np.metadata?.name,
             namespace: np.metadata?.namespace,
             podSelector: np.spec?.podSelector,
@@ -432,7 +615,23 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               })),
             })),
           };
+
+          return applyGetFormatting(rawResult, {
+            kind: "NetworkPolicy",
+            name,
+            namespace,
+            output,
+            subpath,
+          });
         } catch (error) {
+          if (ignoreNotFound && isNotFoundError(error)) {
+            return {
+              found: false,
+              name,
+              namespace: namespace || "default",
+              message: `NetworkPolicy '${name}' not found`,
+            };
+          }
           const context: ErrorContext = { operation: "k8s_get_network_policy", resource: name, namespace };
           const classified = classifyError(error, context);
           return {
@@ -615,37 +814,53 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the Service",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "service");
-          const coreApi = k8sClient.getCoreV1Api();
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Service",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await coreApi.deleteNamespacedService({ name, namespace: ns, ...options });
+
+          const coreApi = k8sClient.getCoreV1Api();
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await coreApi.deleteNamespacedService({ name, namespace: ns, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Service ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_service", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "Service", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_service", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -673,37 +888,53 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               description: "Namespace of the Ingress",
               default: "default",
             },
-            gracePeriodSeconds: {
-              type: "number",
-              description: "Grace period for termination",
-            },
+            ...commonDeleteQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, gracePeriodSeconds }: { 
+      handler: async ({
+        name,
+        namespace,
+        dryRun,
+        gracePeriodSeconds,
+        propagationPolicy,
+        ignoreNotFound,
+      }: { 
         name: string; 
         namespace?: string;
+        dryRun?: string;
         gracePeriodSeconds?: number;
+        propagationPolicy?: string;
+        ignoreNotFound?: boolean;
       }) => {
+        const ns = namespace || "default";
         try {
           validateResourceName(name, "ingress");
-          const netApi = (k8sClient as any).kc.makeApiClient(k8s.NetworkingV1Api);
-          const ns = namespace || "default";
-          
-          const options: any = {};
-          if (gracePeriodSeconds !== undefined) {
-            options.gracePeriodSeconds = gracePeriodSeconds;
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunDelete({
+              kind: "Ingress",
+              name,
+              namespace: ns,
+              gracePeriodSeconds,
+              propagationPolicy,
+            });
           }
-          
-          await netApi.deleteNamespacedIngress({ name, namespace: ns, ...options });
+
+          const netApi = (k8sClient as any).kc.makeApiClient(k8s.NetworkingV1Api);
+          const deleteParams = buildServerDeleteParams({ dryRun, gracePeriodSeconds, propagationPolicy });
+          await netApi.deleteNamespacedIngress({ name, namespace: ns, ...deleteParams });
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Ingress ${name} in namespace ${ns} deleted`,
           };
         } catch (error) {
-          const context: ErrorContext = { operation: "k8s_delete_ingress", resource: name, namespace };
+          const handled = handleDeleteError(error, { kind: "Ingress", name, namespace: ns, ignoreNotFound });
+          if (handled) return handled;
+          const context: ErrorContext = { operation: "k8s_delete_ingress", resource: name, namespace: ns };
           const classified = classifyError(error, context);
           return {
             success: false,
@@ -758,17 +989,19 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "External name for ExternalName type service",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "ports"],
         },
       },
-      handler: async ({ name, namespace, type, selector, ports, externalName }: { 
+      handler: async ({ name, namespace, type, selector, ports, externalName, dryRun }: { 
         name: string; 
         namespace?: string; 
         type?: string;
         selector?: Record<string, string>;
         ports: any[];
         externalName?: string;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "service");
@@ -806,11 +1039,22 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               ...(externalName && type === "ExternalName" ? { externalName } : {}),
             },
           };
-          
-          const result = await coreApi.createNamespacedService({ namespace: ns, body: service }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Service",
+              name,
+              namespace: ns,
+              manifest: service,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await coreApi.createNamespacedService({ namespace: ns, body: service, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Service ${name} created in namespace ${ns}`,
             service: {
               name: result.metadata?.name,
@@ -871,11 +1115,12 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Name for the created service (defaults to resource name)",
             },
+            ...commonMutationQuerySchema,
           },
           required: ["resource", "name", "port"],
         },
       },
-      handler: async ({ resource, name, namespace, port, targetPort, type, serviceName }: { 
+      handler: async ({ resource, name, namespace, port, targetPort, type, serviceName, dryRun }: { 
         resource: string; 
         name: string; 
         namespace?: string;
@@ -883,6 +1128,7 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
         targetPort?: number;
         type?: string;
         serviceName?: string;
+        dryRun?: 'none' | 'client' | 'server';
       }) => {
         try {
           validateResourceName(name, resource);
@@ -893,9 +1139,11 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
           if (namespace) {
             validateNamespace(namespace);
           }
+          const ns = namespace || "default";
+          const svcName = serviceName || name;
+
           const coreApi = k8sClient.getCoreV1Api();
           const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
-          const ns = namespace || "default";
           
           // Get the resource to extract its selector
           let selector: Record<string, string> = {};
@@ -931,7 +1179,6 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
           }
           
           // Create the service
-          const svcName = serviceName || name;
           const service: k8s.V1Service = {
             apiVersion: "v1",
             kind: "Service",
@@ -949,12 +1196,31 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               }],
             },
           };
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunMutation({
+              operation: "Expose resource as service",
+              kind: "Service",
+              name: svcName,
+              namespace: ns,
+              patch: service,
+              details: {
+                resource,
+                name,
+                port,
+                targetPort: targetPort || port,
+                type: type || "ClusterIP",
+              },
+            });
+          }
           
-          const result = await coreApi.createNamespacedService({ namespace: ns, body: service }, {});
+          const serverDryRunParam = dryRun === "server" ? "All" : undefined;
+          const result = await coreApi.createNamespacedService({ namespace: ns, body: service, dryRun: serverDryRunParam });
           
           return {
             success: true,
-            message: `Exposed ${resource}/${name} as service ${svcName}`,
+            dryRun: dryRun === 'server' ? 'server' : (dryRun || 'none'),
+            message: `Exposed ${resource}/${name} as service ${svcName}${dryRun === 'server' ? ' (server dry run)' : ''}`,
             service: {
               name: result.metadata?.name,
               namespace: result.metadata?.namespace,
@@ -1030,16 +1296,18 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "object",
               description: "Ingress annotations (e.g., nginx.ingress.kubernetes.io/rewrite-target)",
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name", "rules"],
         },
       },
-      handler: async ({ name, namespace, rules, tls, annotations }: { 
+      handler: async ({ name, namespace, rules, tls, annotations, dryRun }: { 
         name: string; 
         namespace?: string;
         rules: any[];
         tls?: any[];
         annotations?: Record<string, string>;
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "ingress");
@@ -1078,11 +1346,22 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               })),
             },
           };
-          
-          const result = await netApi.createNamespacedIngress({ namespace: ns, body: ingress }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "Ingress",
+              name,
+              namespace: ns,
+              manifest: ingress,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await netApi.createNamespacedIngress({ namespace: ns, body: ingress, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `Ingress ${name} created in namespace ${ns}`,
             ingress: {
               name: result.metadata?.name,
@@ -1152,17 +1431,19 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
                 },
               },
             },
+            ...commonCreateQuerySchema,
           },
           required: ["name"],
         },
       },
-      handler: async ({ name, namespace, podSelector, policyTypes, ingress, egress }: { 
+      handler: async ({ name, namespace, podSelector, policyTypes, ingress, egress, dryRun }: { 
         name: string; 
         namespace?: string;
         podSelector?: Record<string, string>;
         policyTypes?: string[];
         ingress?: any[];
         egress?: any[];
+        dryRun?: string;
       }) => {
         try {
           validateResourceName(name, "networkpolicy");
@@ -1185,11 +1466,22 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               egress: egress || [],
             },
           };
-          
-          const result = await netApi.createNamespacedNetworkPolicy({ namespace: ns, body: networkPolicy }, {});
+
+          if (isClientDryRun(dryRun)) {
+            return formatClientDryRunCreate({
+              kind: "NetworkPolicy",
+              name,
+              namespace: ns,
+              manifest: networkPolicy,
+            });
+          }
+
+          const createParams = buildServerCreateParams({ dryRun });
+          const result = await netApi.createNamespacedNetworkPolicy({ namespace: ns, body: networkPolicy, ...createParams }, {});
           
           return {
             success: true,
+            dryRun: dryRun || "none",
             message: `NetworkPolicy ${name} created in namespace ${ns}`,
             networkPolicy: {
               name: result.metadata?.name,
@@ -1236,10 +1528,23 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Filter by service name",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace, service }: { namespace?: string; service?: string }) => {
+      handler: async ({ namespace, service, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        service?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
           const coreApi = k8sClient.getCoreV1Api();
           let endpoints: k8s.V1Endpoints[] = [];
@@ -1249,33 +1554,46 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
             const ep = await coreApi.readNamespacedEndpoints({ name: service, namespace });
             endpoints = [ep];
           } else if (namespace) {
-            const result = await coreApi.listNamespacedEndpoints({ namespace });
+            const result = await coreApi.listNamespacedEndpoints({ namespace, labelSelector, fieldSelector });
             endpoints = result.items || [];
           } else {
-            const result = await coreApi.listEndpointsForAllNamespaces();
+            const result = await coreApi.listEndpointsForAllNamespaces({ labelSelector, fieldSelector });
             endpoints = result.items || [];
           }
+
+          if (service && !namespace) {
+            endpoints = endpoints.filter(ep => ep.metadata?.name === service);
+          }
           
-          return {
-            endpoints: endpoints.map((ep: k8s.V1Endpoints) => ({
-              name: ep.metadata?.name,
-              namespace: ep.metadata?.namespace,
-              service: ep.metadata?.name, // Endpoints name matches service name
-              subsets: (ep.subsets || []).map((subset: any) => ({
-                addresses: (subset.addresses || []).map((a: any) => ({
-                  ip: a.ip,
-                  hostname: a.hostname,
-                  nodeName: a.nodeName,
-                  targetRef: a.targetRef?.name,
-                })),
-                ports: (subset.ports || []).map((p: any) => ({
-                  port: p.port,
-                  name: p.name,
-                  protocol: p.protocol,
-                })),
+          const mapped = endpoints.map((ep: k8s.V1Endpoints) => ({
+            name: ep.metadata?.name,
+            namespace: ep.metadata?.namespace,
+            service: ep.metadata?.name, // Endpoints name matches service name
+            subsets: (ep.subsets || []).map((subset: any) => ({
+              addresses: (subset.addresses || []).map((a: any) => ({
+                ip: a.ip,
+                hostname: a.hostname,
+                nodeName: a.nodeName,
+                targetRef: a.targetRef?.name,
+              })),
+              ports: (subset.ports || []).map((p: any) => ({
+                port: p.port,
+                name: p.name,
+                protocol: p.protocol,
               })),
             })),
-            total: endpoints.length,
+            labels: ep.metadata?.labels,
+            age: ep.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            endpoints: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_endpoints", namespace };
@@ -1305,19 +1623,33 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
               type: "string",
               description: "Filter by service name (label selector)",
             },
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
           },
         },
       },
-      handler: async ({ namespace, service }: { namespace?: string; service?: string }) => {
+      handler: async ({ namespace, service, labelSelector, fieldSelector, sortBy, descending, limit }: {
+        namespace?: string;
+        service?: string;
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      }) => {
         try {
           const rawClient = k8sClient as any;
-          let path: string;
-          
-          if (namespace) {
-            path = `/apis/discovery.k8s.io/v1/namespaces/${namespace}/endpointslices`;
-          } else {
-            path = "/apis/discovery.k8s.io/v1/endpointslices";
-          }
+          const queryParams = new URLSearchParams();
+          if (labelSelector) queryParams.set("labelSelector", labelSelector);
+          if (fieldSelector) queryParams.set("fieldSelector", fieldSelector);
+          const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
+          let path = namespace
+            ? `/apis/discovery.k8s.io/v1/namespaces/${namespace}/endpointslices${qs}`
+            : `/apis/discovery.k8s.io/v1/endpointslices${qs}`;
           
           const result = await rawClient.rawApiRequest(path);
           let slices = result.items || [];
@@ -1329,27 +1661,36 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
             );
           }
           
-          return {
-            endpointSlices: slices.map((slice: any) => ({
-              name: slice.metadata?.name,
-              namespace: slice.metadata?.namespace,
-              service: slice.metadata?.labels?.["kubernetes.io/service-name"],
-              addressType: slice.addressType,
-              endpoints: (slice.endpoints || []).map((ep: any) => ({
-                addresses: ep.addresses,
-                conditions: ep.conditions,
-                hostname: ep.hostname,
-                nodeName: ep.nodeName,
-                targetRef: ep.targetRef?.name,
-              })),
-              ports: (slice.ports || []).map((p: any) => ({
-                port: p.port,
-                name: p.name,
-                protocol: p.protocol,
-                appProtocol: p.appProtocol,
-              })),
+          const mapped = slices.map((slice: any) => ({
+            name: slice.metadata?.name,
+            namespace: slice.metadata?.namespace,
+            service: slice.metadata?.labels?.["kubernetes.io/service-name"],
+            addressType: slice.addressType,
+            endpoints: (slice.endpoints || []).map((ep: any) => ({
+              addresses: ep.addresses,
+              conditions: ep.conditions,
+              hostname: ep.hostname,
+              nodeName: ep.nodeName,
+              targetRef: ep.targetRef?.name,
             })),
-            total: slices.length,
+            ports: (slice.ports || []).map((p: any) => ({
+              port: p.port,
+              name: p.name,
+              protocol: p.protocol,
+              appProtocol: p.appProtocol,
+            })),
+            labels: slice.metadata?.labels,
+            age: slice.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
+          return {
+            endpointSlices: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
+            namespace: namespace || "all",
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_endpointslice", namespace };
@@ -1370,26 +1711,51 @@ export function registerNetworkingTools(k8sClient: K8sClient): { tool: Tool; han
         description: "List IngressClasses (like kubectl get ingressclass)",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            labelSelector: commonListQuerySchema.labelSelector,
+            fieldSelector: commonListQuerySchema.fieldSelector,
+            sortBy: commonListQuerySchema.sortBy,
+            descending: commonListQuerySchema.descending,
+            limit: commonListQuerySchema.limit,
+          },
         },
       },
-      handler: async () => {
+      handler: async ({ labelSelector, fieldSelector, sortBy, descending, limit }: {
+        labelSelector?: string;
+        fieldSelector?: string;
+        sortBy?: string;
+        descending?: boolean;
+        limit?: number;
+      } = {}) => {
         try {
           const rawClient = k8sClient as any;
-          const result = await rawClient.rawApiRequest("/apis/networking.k8s.io/v1/ingressclasses");
+          const queryParams = new URLSearchParams();
+          if (labelSelector) queryParams.set("labelSelector", labelSelector);
+          if (fieldSelector) queryParams.set("fieldSelector", fieldSelector);
+          const qs = queryParams.toString() ? `?${queryParams.toString()}` : "";
+
+          const result = await rawClient.rawApiRequest(`/apis/networking.k8s.io/v1/ingressclasses${qs}`);
           
           const ingressClasses = result.items || [];
           
+          const mapped = ingressClasses.map((ic: any) => ({
+            name: ic.metadata?.name,
+            controller: ic.spec?.controller,
+            isDefault: ic.metadata?.annotations?.["ingressclass.kubernetes.io/is-default-class"] === "true",
+            parameters: ic.spec?.parameters,
+            apiGroup: ic.spec?.parameters?.apiGroup,
+            kind: ic.spec?.parameters?.kind,
+            labels: ic.metadata?.labels,
+            age: ic.metadata?.creationTimestamp,
+          }));
+
+          const queryResult = applySortAndLimit(mapped, { sortBy, descending, limit });
+
           return {
-            ingressClasses: ingressClasses.map((ic: any) => ({
-              name: ic.metadata?.name,
-              controller: ic.spec?.controller,
-              isDefault: ic.metadata?.annotations?.["ingressclass.kubernetes.io/is-default-class"] === "true",
-              parameters: ic.spec?.parameters,
-              apiGroup: ic.spec?.parameters?.apiGroup,
-              kind: ic.spec?.parameters?.kind,
-            })),
-            total: ingressClasses.length,
+            ingressClasses: queryResult.items,
+            total: queryResult.total,
+            returned: queryResult.returned,
+            sortedBy: queryResult.sortedBy,
           };
         } catch (error) {
           const context: ErrorContext = { operation: "k8s_list_ingressclass" };
