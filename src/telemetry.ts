@@ -1,7 +1,7 @@
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-grpc";
-import { Resource } from "@opentelemetry/resources";
-import { SemanticResourceAttributes } from "@opentelemetry/semantic-conventions";
+import { resourceFromAttributes, defaultResource } from "@opentelemetry/resources";
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
 import { trace } from "@opentelemetry/api";
 
 let sdk: NodeSDK | null = null;
@@ -21,10 +21,10 @@ export function initializeTelemetry(): void {
   const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT || "http://localhost:4317";
   const serviceName = process.env.OTEL_SERVICE_NAME || "k8s-helm-mcp";
 
-  const resource = Resource.default().merge(
-    new Resource({
-      [SemanticResourceAttributes.SERVICE_NAME]: serviceName,
-      [SemanticResourceAttributes.SERVICE_VERSION]: process.env.npm_package_version || "0.19.0",
+  const resource = defaultResource().merge(
+    resourceFromAttributes({
+      [ATTR_SERVICE_NAME]: serviceName,
+      [ATTR_SERVICE_VERSION]: process.env.npm_package_version || "0.19.0",
     })
   );
 
