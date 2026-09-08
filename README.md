@@ -1104,7 +1104,7 @@ The server exposes a large tool surface. `K8S_TOOLSETS` controls **which tools a
 
 | Preset | Includes |
 |--------|----------|
-| `all` / `full` | Every category (default) |
+| `all` / `full` / `admin` | Every category (default) |
 | `kubernetes` / `k8s` | Every Kubernetes category, **excludes** Helm |
 | `helm` | Helm tools only |
 | `core` | cluster, nodes, pods, workloads, networking, storage, config |
@@ -1117,6 +1117,7 @@ Any individual category is also a valid token: `cluster`, `nodes`, `pods`, `work
 | Flag | Effect |
 |------|--------|
 | `readonly` (`ro`) | Keep only read/list/get/inspect tools |
+| `readwrite` (`rw`) | Keep reads + resource CRUD, but remove node-admin ops (cordon, drain, taint, node labels) |
 | `nodelete` | Keep reads and updates, remove all delete/destroy tools |
 | `lean` (`minimal`) | Expose just `k8s_kubectl` plus a handful of core reads |
 
@@ -1124,9 +1125,21 @@ Presets are applied first, then flags trim the result — so `K8S_TOOLSETS=kuber
 
 > The 8 server-management tools (server info/health/metrics, cache, protection toggles) are always registered regardless of selection.
 
+**Access-level ladder.** If you prefer the familiar three-rung model used by other Kubernetes MCP servers, the tokens map directly:
+
+| Access level | Token | Surface |
+|--------------|-------|---------|
+| Read-only | `readonly` | Inspect only — no mutations (142 tools) |
+| Read-write | `readwrite` | Reads + resource CRUD, no node lifecycle |
+| Admin | `admin` (= `all`) | Everything, including cordon/drain/taint |
+
+`readonly` is the strictest and wins if combined with others. `readwrite` and `nodelete` are independent and compose (`readwrite,nodelete` = writes, but neither node-admin nor deletions). We keep `all` as the default rather than `readonly`, so upgrades don't silently drop tools — set `K8S_TOOLSETS=readonly` explicitly for least-privilege fleets.
+
 **Examples:**
 ```bash
 K8S_TOOLSETS=readonly npm start                       # read-only surface (ideal for least-privilege agents)
+K8S_TOOLSETS=readwrite npm start                       # reads + CRUD, no node cordon/drain/taint
+K8S_TOOLSETS=admin npm start                           # everything (same as `all`)
 K8S_TOOLSETS=kubernetes npm start                     # all K8s tools, no Helm
 K8S_TOOLSETS=helm npm start                            # Helm tools only
 K8S_TOOLSETS=core,diagnostics npm start                # focused ops surface

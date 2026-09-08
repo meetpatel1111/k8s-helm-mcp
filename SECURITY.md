@@ -178,9 +178,13 @@ Configure via environment variables (see the README [Toolsets](README.md#toolset
 | Variable | Effect |
 |----------|--------|
 | `K8S_TOOLSETS=readonly` | Registers only read/list/get/inspect tools — the model never sees any mutating or deletion tool |
+| `K8S_TOOLSETS=readwrite` | Registers reads + resource CRUD, but no node-admin ops (cordon, drain, taint, node labels) |
+| `K8S_TOOLSETS=admin` | Every tool, including node lifecycle (alias for `all`, the default) |
 | `K8S_TOOLSETS=nodelete` | Registers reads and updates but no delete/destroy tools |
 | `K8S_TOOLSETS=kubernetes` / `helm` / `core` / `lean` | Registers a focused subset for the agent's job |
 | `K8S_DISABLED_TOOLSETS=...` | Removes specific categories after selection |
+
+The access-level ladder (`readonly` → `readwrite` → `admin`) mirrors the model used by other Kubernetes MCP servers; `readonly` is the strictest and wins when combined with other filters.
 
 ```bash
 # Least-privilege observability agent: read-only surface, enforced at registration

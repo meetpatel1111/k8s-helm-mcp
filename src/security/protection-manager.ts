@@ -150,6 +150,15 @@ export class ProtectionManager {
     "k8s_config_delete_context", "k8s_remove_node_label", "k8s_cache_clear",
   ]);
 
+  // Node / cluster administration - scheduling and node-mutating operations.
+  // These separate the "readwrite" access level (normal resource CRUD) from
+  // the "admin" level (node lifecycle), matching the common access-level ladder.
+  private static readonly NODE_ADMIN_TOOLS = new Set([
+    "k8s_drain_node", "k8s_cordon_node", "k8s_uncordon_node",
+    "k8s_add_node_taint", "k8s_remove_node_taint",
+    "k8s_add_node_label", "k8s_remove_node_label",
+  ]);
+
   constructor(config: {
     infraProtectionEnabled?: boolean;
     strictProtectionEnabled?: boolean;
@@ -200,6 +209,7 @@ export class ProtectionManager {
   public static isReadOnly(toolName: string): boolean { return ProtectionManager.READ_ONLY_TOOLS.has(toolName); }
   public static isDeletion(toolName: string): boolean { return ProtectionManager.DELETION_TOOLS.has(toolName); }
   public static isDestructive(toolName: string): boolean { return ProtectionManager.DESTRUCTIVE_TOOLS.has(toolName); }
+  public static isNodeAdmin(toolName: string): boolean { return ProtectionManager.NODE_ADMIN_TOOLS.has(toolName); }
   public isDestructiveTool(toolName: string): boolean { return ProtectionManager.DESTRUCTIVE_TOOLS.has(toolName); }
   public isDeletionTool(toolName: string): boolean { return ProtectionManager.DELETION_TOOLS.has(toolName); }
 

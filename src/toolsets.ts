@@ -10,20 +10,27 @@
  *                          categories: cluster,nodes,pods,workloads,networking,
  *                          storage,security,monitoring,config,diagnostics,
  *                          advanced,templates,websocket,multicluster,sre,helm
- *                          presets:    all | full | kubernetes | helm | core |
- *                                      diagnostics | readonly | nodelete | lean
+ *                          presets:    all | full | admin | kubernetes | helm |
+ *                                      core | diagnostics
+ *                          filters:    readonly | readwrite | nodelete | lean
  *   K8S_DISABLED_TOOLSETS  comma list of categories to remove after selection.
  *
  * "kubernetes" (alias "k8s") selects every Kubernetes category and excludes
  * Helm; "helm" selects only the Helm tools — the two are complements that
  * together equal "all".
- * "readonly" keeps only read/list/get/inspect tools (the same classification
- * the Strict protection mode uses) — ideal for enterprise, read-heavy
- * deployments where the model should never see mutating tools. "nodelete"
- * keeps reads and updates but removes every delete/destroy tool (mirrors the
- * NoDelete protection mode). Both are filters and compose with any category
- * selection, e.g. "kubernetes,nodelete". "lean" exposes just the generic
- * kubectl passthrough plus a few core reads.
+ *
+ * Access-level ladder (familiar from other Kubernetes MCP servers), expressed
+ * as filters over the selected categories:
+ *   readonly   only read/list/get/inspect tools (same classification the Strict
+ *              protection mode uses) — ideal for read-heavy enterprise fleets.
+ *   readwrite  reads + resource CRUD, but NOT node-admin ops (cordon, drain,
+ *              taint, node labels). The middle rung of the ladder.
+ *   admin      alias for "all" — every tool, including node lifecycle.
+ * "nodelete" is an orthogonal filter (reads + updates, no delete/destroy;
+ * mirrors the NoDelete protection mode) and composes with readwrite, e.g.
+ * "readwrite,nodelete". "lean" exposes just the generic kubectl passthrough
+ * plus a few core reads. Filters compose with any category selection, e.g.
+ * "kubernetes,readonly". Default (unset) is "all".
  */
 import { K8sClient } from "./k8s-client.js";
 import { CacheManager } from "./cache-manager.js";
@@ -150,6 +157,7 @@ export function buildCategorizedTools(
 export interface ToolsetSelection {
   categories: Set<ToolsetCategory>;
   readOnly: boolean;
+  readWrite: boolean;
   noDelete: boolean;
   lean: boolean;
   raw: string;
@@ -167,13 +175,15 @@ export function loadToolsetConfig(): ToolsetSelection {
 
   const categories = new Set<ToolsetCategory>();
   let readOnly = false;
+  let readWrite = false;
   let noDelete = false;
   let lean = false;
   const addAll = () => TOOLSET_CATEGORIES.forEach((c) => categories.add(c));
 
   for (const t of tokens) {
-    if (t === "all" || t === "full") addAll();
+    if (t === "all" || t === "full" || t === "admin") addAll();
     else if (t === "readonly" || t === "read-only" || t === "ro") readOnly = true;
+    else if (t === "readwrite" || t === "read-write" || t === "rw") readWrite = true;
     else if (t === "nodelete" || t === "no-delete") noDelete = true;
     else if (t === "lean" || t === "minimal") lean = true;
     else if (PRESET_CATEGORIES[t]) PRESET_CATEGORIES[t].forEach((c) => categories.add(c));
@@ -185,7 +195,7 @@ export function loadToolsetConfig(): ToolsetSelection {
   if (categories.size === 0) addAll();
   for (const d of disabled) categories.delete(d as ToolsetCategory);
 
-  return { categories, readOnly, noDelete, lean, raw };
+  return { categories, readOnly, readWrite, noDelete, lean, raw };
 }
 
 /** Apply a selection to the categorized tools, returning the tools to register. */
@@ -201,10 +211,16 @@ export function selectTools(
     entries = entries.filter((e) => LEAN_TOOL_NAMES.has(e.tool.name));
   }
   if (sel.readOnly) {
+    // Strictest rung — terminal; readonly already excludes writes and deletes.
     entries = entries.filter((e) => ProtectionManager.isReadOnly(e.tool.name));
-  } else if (sel.noDelete) {
-    // readonly already excludes deletions; only apply nodelete on its own.
-    entries = entries.filter((e) => !ProtectionManager.isDeletion(e.tool.name));
+  } else {
+    // readwrite and nodelete are independent filters that compose (AND).
+    if (sel.readWrite) {
+      entries = entries.filter((e) => !ProtectionManager.isNodeAdmin(e.tool.name));
+    }
+    if (sel.noDelete) {
+      entries = entries.filter((e) => !ProtectionManager.isDeletion(e.tool.name));
+    }
   }
   return entries;
 }
@@ -216,6 +232,7 @@ export function describeSelection(sel: ToolsetSelection): string {
     : [...sel.categories].join("+");
   const flags = [
     sel.readOnly ? "readonly" : "",
+    sel.readWrite ? "readwrite" : "",
     sel.noDelete ? "nodelete" : "",
     sel.lean ? "lean" : "",
   ].filter(Boolean);

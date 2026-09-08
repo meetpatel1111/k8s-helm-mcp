@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Toolset Selection (`K8S_TOOLSETS`)**: Choose which tools the server registers at startup — reduce model context, stay under client tool-count limits, or ship a least-privilege surface. Two-stage model: additive presets/categories pick groups, then filter flags trim.
   - Presets: `all`/`full` (default), `kubernetes`/`k8s` (all categories except Helm), `helm` (Helm only), `core`, `diagnostics`. `kubernetes` and `helm` are disjoint complements whose union equals `all`.
-  - Filter flags: `readonly` (reads only), `nodelete` (reads + updates, no deletions), `lean` (`k8s_kubectl` + a few core reads). Flags compose with any selection, e.g. `kubernetes,nodelete`.
+  - Filter flags: `readonly` (reads only), `readwrite` (reads + resource CRUD, no node-admin ops), `nodelete` (reads + updates, no deletions), `lean` (`k8s_kubectl` + a few core reads). Flags compose with any selection, e.g. `kubernetes,nodelete`.
+  - Familiar access-level ladder: `readonly` → `readwrite` → `admin` (alias for `all`), mapping onto the same registration-time filter. `readonly` is strictest and wins when combined. Default stays `all` (non-breaking); a safe-by-default flip to `readonly` is planned for a future major.
   - `K8S_DISABLED_TOOLSETS` removes whole categories after selection. The 8 server-management tools are always registered.
   - Selection is registration-time only and never changes tool behavior; default (`all`) is identical to previous versions. Applies to both stdio and SSE transports.
 - **Connection pool tuning**: `K8S_MAX_SOCKETS` (default 50) and `K8S_KEEPALIVE_MS` (default 30000) tune the API-server HTTP pool under the new undici backend.
