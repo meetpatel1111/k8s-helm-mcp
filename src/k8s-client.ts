@@ -6,6 +6,7 @@ import * as https from "https";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { setGlobalDispatcher, Agent as UndiciAgent } from "undici";
 import { 
   K8sMcpError, 
   classifyError, 
@@ -150,7 +151,6 @@ export class K8sClient {
   private autoscalingV2Api: k8s.AutoscalingV2Api;
   private requestTimeout: number = 30000; // 30 seconds default
   private retryAttempts: number = 3;
-  private httpsAgent!: https.Agent;
 
   constructor() {
     // Check kubectl is installed first
@@ -318,23 +318,23 @@ export class K8sClient {
   }
 
   private setupConnectionPooling(): void {
-    // Create a shared HTTPS agent with connection pooling
-    this.httpsAgent = new https.Agent({
-      keepAlive: true,
-      keepAliveMsecs: 30000, // 30 seconds
-      maxSockets: 50, // Maximum concurrent connections
-      maxFreeSockets: 10, // Keep 10 idle connections alive
-      timeout: 60000, // 60 second socket timeout
-    });
-
-    // Apply the agent to all clusters in the kubeconfig
-    const clusters = this._kc.clusters;
-    for (const cluster of clusters) {
-      if (cluster.server && cluster.server.startsWith('https://')) {
-        // Set the custom agent for HTTPS connections
-        (cluster as any).agent = this.httpsAgent;
-      }
-    }
+    // @kubernetes/client-node 2.x uses undici as its HTTP backend, so node's
+    // https.Agent (and the old cluster.agent hook) is ignored. Own the transport
+    // explicitly via a tuned global undici dispatcher — shared with the client
+    // (same deduped undici instance) — so keep-alive and per-origin connection
+    // limits stay stable across client-node/undici upgrades instead of drifting
+    // with undici defaults (idle keep-alive ~4s, connections uncapped). This
+    // server fans many list/get calls out in parallel, so a bounded, warm pool
+    // matters for throughput and avoids socket churn.
+    const maxSockets = parseInt(process.env.K8S_MAX_SOCKETS || "", 10);
+    const keepAliveMs = parseInt(process.env.K8S_KEEPALIVE_MS || "", 10);
+    setGlobalDispatcher(
+      new UndiciAgent({
+        connections: Number.isFinite(maxSockets) && maxSockets > 0 ? maxSockets : 50,
+        keepAliveTimeout: Number.isFinite(keepAliveMs) && keepAliveMs > 0 ? keepAliveMs : 30000,
+        keepAliveMaxTimeout: 600000, // hard cap idle keep-alive at 10 minutes
+      })
+    );
   }
 
   private validateConfiguration(): void {
