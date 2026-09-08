@@ -10,40 +10,8 @@ import { initializeTelemetry } from "./telemetry.js";
 import { createRequire } from "module";
 import * as crypto from "crypto";
 
-// Import all tool registration functions
-import { registerClusterTools } from "./k8s-tools/cluster.js";
-import { registerNodeTools } from "./k8s-tools/nodes.js";
-import { registerPodTools } from "./k8s-tools/pods.js";
-import { registerWorkloadTools } from "./k8s-tools/workloads.js";
-import { registerNetworkingTools } from "./k8s-tools/networking.js";
-import { registerStorageTools } from "./k8s-tools/storage.js";
-import { registerSecurityTools } from "./k8s-tools/security.js";
-import { registerMonitoringTools } from "./k8s-tools/monitoring.js";
-import { registerConfigTools } from "./k8s-tools/config.js";
-import { registerAdvancedTools } from "./k8s-tools/advanced.js";
-import { registerTemplateTools } from "./k8s-tools/templates.js";
-import { registerWebSocketTools } from "./k8s-tools/websocket.js";
-import { registerDiagnosticsTools } from "./k8s-tools/diagnostics.js";
-import { registerMultiClusterTools } from "./k8s-tools/multi-cluster.js";
-import { registerHelmReleaseListTools } from "./helm-tools/release-list.js";
-import { registerHelmReleaseStatusTools } from "./helm-tools/release-status.js";
-import { registerHelmReleaseHistoryTools } from "./helm-tools/release-history.js";
-import { registerHelmReleaseGetValuesTools } from "./helm-tools/release-get-values.js";
-import { registerHelmReleaseInstallTools } from "./helm-tools/release-install.js";
-import { registerHelmReleaseUninstallTools } from "./helm-tools/release-uninstall.js";
-import { registerHelmReleaseUpgradeTools } from "./helm-tools/release-upgrade.js";
-import { registerHelmReleaseRollbackTools } from "./helm-tools/release-rollback.js";
-import { registerHelmReleaseTestTools } from "./helm-tools/release-test.js";
-import { registerHelmReleaseGetInfoTools } from "./helm-tools/release-get-info.js";
-import { registerHelmSearchHubTools } from "./helm-tools/search-hub.js";
-import { registerHelmRepoManagementTools } from "./helm-tools/repo-management.js";
-import { registerHelmShowChartTools } from "./helm-tools/show-chart.js";
-import { registerHelmChartManagementTools } from "./helm-tools/chart-management.js";
-import { registerHelmChartTemplateTools } from "./helm-tools/chart-template.js";
-import { registerHelmDependencyManagementTools } from "./helm-tools/dependency-management.js";
-import { registerHelmPluginManagementTools } from "./helm-tools/plugin-management.js";
-import { registerHelmRegistryManagementTools } from "./helm-tools/registry-management.js";
-import { registerHelmEnvironmentTools } from "./helm-tools/environment.js";
+// Tool registration + toolset gating (shared with the stdio server).
+import { buildCategorizedTools, loadToolsetConfig, selectTools } from "./toolsets.js";
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json");
@@ -74,46 +42,9 @@ function createToolRegistry() {
   const toolRegistry = new ToolRegistry();
   const { k8sClient, cacheManager } = getSharedResources();
 
-  // Register all tool categories
-  const registerTools = (tools: { tool: any; handler: Function }[]) => {
-    tools.forEach(({ tool, handler }) => {
-      toolRegistry.register({ tool, handler });
-    });
-  };
-
-  registerTools(registerClusterTools(k8sClient));
-  registerTools(registerNodeTools(k8sClient));
-  registerTools(registerPodTools(k8sClient));
-  registerTools(registerWorkloadTools(k8sClient));
-  registerTools(registerNetworkingTools(k8sClient));
-  registerTools(registerStorageTools(k8sClient));
-  registerTools(registerSecurityTools(k8sClient));
-  registerTools(registerMonitoringTools(k8sClient));
-  registerTools(registerConfigTools(k8sClient));
-  registerTools(registerAdvancedTools(k8sClient, cacheManager));
-  registerTools(registerTemplateTools(k8sClient));
-  registerTools(registerWebSocketTools(k8sClient));
-  registerTools(registerHelmReleaseListTools(k8sClient));
-  registerTools(registerHelmReleaseStatusTools(k8sClient));
-  registerTools(registerHelmReleaseHistoryTools(k8sClient));
-  registerTools(registerHelmReleaseGetValuesTools(k8sClient));
-  registerTools(registerHelmReleaseInstallTools(k8sClient));
-  registerTools(registerHelmReleaseUninstallTools(k8sClient));
-  registerTools(registerHelmReleaseUpgradeTools(k8sClient));
-  registerTools(registerHelmReleaseRollbackTools(k8sClient));
-  registerTools(registerHelmReleaseTestTools(k8sClient));
-  registerTools(registerHelmReleaseGetInfoTools(k8sClient));
-  registerTools(registerHelmSearchHubTools(k8sClient));
-  registerTools(registerHelmRepoManagementTools(k8sClient));
-  registerTools(registerHelmShowChartTools(k8sClient));
-  registerTools(registerHelmChartManagementTools(k8sClient));
-  registerTools(registerHelmChartTemplateTools(k8sClient));
-  registerTools(registerHelmDependencyManagementTools(k8sClient));
-  registerTools(registerHelmPluginManagementTools(k8sClient));
-  registerTools(registerHelmRegistryManagementTools(k8sClient));
-  registerTools(registerHelmEnvironmentTools(k8sClient));
-  registerTools(registerDiagnosticsTools(k8sClient));
-  registerTools(registerMultiClusterTools(k8sClient));
+  // Register tool categories, gated by K8S_TOOLSETS (default: all).
+  const categorized = buildCategorizedTools(k8sClient, cacheManager);
+  toolRegistry.registerMany(selectTools(categorized, loadToolsetConfig()));
 
   return toolRegistry;
 }

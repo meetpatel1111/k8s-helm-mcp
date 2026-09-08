@@ -1018,6 +1018,11 @@ Use the k8s_rollback_deployment tool with:
 | `INFRA_PROTECTION_MODE` | Enable infrastructure protection (blocks destructive operations) | `true` (enabled) |
 | `STRICT_PROTECTION_MODE` | Enable strict protection (blocks all non-read operations) | `true` (enabled) |
 | `NO_DELETE_PROTECTION_MODE` | Enable no-delete protection (blocks deletions only, allows updates) | `true` (enabled) |
+| `K8S_TOOLSETS` | Comma-separated categories/presets to expose (see [Toolsets](#toolsets-tool-selection)) | `all` |
+| `K8S_DISABLED_TOOLSETS` | Comma-separated categories to remove after selection | *(none)* |
+| `K8S_MAX_SOCKETS` | Max pooled HTTP connections to the API server | `50` |
+| `K8S_KEEPALIVE_MS` | Idle keep-alive timeout for pooled connections (ms) | `30000` |
+| `MCP_AUTH_TOKEN` | Bearer token required by the SSE/HTTP transport | *(auto-generated)* |
 
 ### Protection Modes
 
@@ -1047,6 +1052,47 @@ k8s_toggle_all_protection_modes { infrastructure: false, strict: false, noDelete
 **Check status:**
 ```
 Use mcp_server_info or mcp_health_check to see current protection mode status
+```
+
+### Toolsets (Tool Selection)
+
+The server exposes a large tool surface. `K8S_TOOLSETS` controls **which tools are registered** at startup — useful for reducing model context, staying under client tool-count limits, or shipping a read-only/least-privilege deployment. This is a *registration-time* filter and never changes any tool's behavior. The default (`all`) registers everything, identical to prior versions.
+
+`K8S_TOOLSETS` takes a comma-separated list of two kinds of token:
+
+**Presets & categories (additive — pick which groups to include):**
+
+| Preset | Includes |
+|--------|----------|
+| `all` / `full` | Every category (default) |
+| `kubernetes` / `k8s` | Every Kubernetes category, **excludes** Helm |
+| `helm` | Helm tools only |
+| `core` | cluster, nodes, pods, workloads, networking, storage, config |
+| `diagnostics` | diagnostics, monitoring, sre |
+
+Any individual category is also a valid token: `cluster`, `nodes`, `pods`, `workloads`, `networking`, `storage`, `security`, `monitoring`, `config`, `diagnostics`, `advanced`, `templates`, `websocket`, `multicluster`, `sre`, `helm`. `kubernetes` and `helm` are complements that together equal `all`.
+
+**Filter flags (subtractive — trim whatever was picked):**
+
+| Flag | Effect |
+|------|--------|
+| `readonly` (`ro`) | Keep only read/list/get/inspect tools |
+| `nodelete` | Keep reads and updates, remove all delete/destroy tools |
+| `lean` (`minimal`) | Expose just `k8s_kubectl` plus a handful of core reads |
+
+Presets are applied first, then flags trim the result — so `K8S_TOOLSETS=kubernetes,nodelete` selects all Kubernetes tools and then strips the deletion tools. A flag given on its own applies against `all`. `K8S_DISABLED_TOOLSETS` removes whole categories after selection.
+
+> The 8 server-management tools (server info/health/metrics, cache, protection toggles) are always registered regardless of selection.
+
+**Examples:**
+```bash
+K8S_TOOLSETS=readonly npm start                       # read-only surface (ideal for least-privilege agents)
+K8S_TOOLSETS=kubernetes npm start                     # all K8s tools, no Helm
+K8S_TOOLSETS=helm npm start                            # Helm tools only
+K8S_TOOLSETS=core,diagnostics npm start                # focused ops surface
+K8S_TOOLSETS=kubernetes,nodelete npm start             # K8s create/update but never delete
+K8S_TOOLSETS=lean npm start                            # minimal footprint (kubectl + core reads)
+K8S_TOOLSETS=all K8S_DISABLED_TOOLSETS=websocket npm start   # everything except exec/attach/port-forward
 ```
 
 ### Secret Scrubbing (Data Redaction)

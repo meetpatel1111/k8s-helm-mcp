@@ -195,6 +195,11 @@ export class ProtectionManager {
   public setNoDeleteProtection(enabled: boolean): void { this.noDeleteProtectionEnabled = enabled; }
 
   public isReadOnlyTool(toolName: string): boolean { return ProtectionManager.READ_ONLY_TOOLS.has(toolName); }
+
+  /** Static classifications — used by toolset registration filtering. */
+  public static isReadOnly(toolName: string): boolean { return ProtectionManager.READ_ONLY_TOOLS.has(toolName); }
+  public static isDeletion(toolName: string): boolean { return ProtectionManager.DELETION_TOOLS.has(toolName); }
+  public static isDestructive(toolName: string): boolean { return ProtectionManager.DESTRUCTIVE_TOOLS.has(toolName); }
   public isDestructiveTool(toolName: string): boolean { return ProtectionManager.DESTRUCTIVE_TOOLS.has(toolName); }
   public isDeletionTool(toolName: string): boolean { return ProtectionManager.DELETION_TOOLS.has(toolName); }
 

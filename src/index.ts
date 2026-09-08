@@ -7,44 +7,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { K8sClient } from "./k8s-client.js";
-import { registerClusterTools } from "./k8s-tools/cluster.js";
-import { registerNodeTools } from "./k8s-tools/nodes.js";
-import { registerPodTools } from "./k8s-tools/pods.js";
-import { registerWorkloadTools } from "./k8s-tools/workloads.js";
-import { registerNetworkingTools } from "./k8s-tools/networking.js";
-import { registerStorageTools } from "./k8s-tools/storage.js";
-import { registerSecurityTools } from "./k8s-tools/security.js";
-import { registerMonitoringTools } from "./k8s-tools/monitoring.js";
-import { registerConfigTools } from "./k8s-tools/config.js";
-import { registerIncidentSnapshotTools } from "./k8s-tools/incident-snapshot.js";
-import { registerChangesSinceTools } from "./k8s-tools/changes-since.js";
-import { registerAdvancedTools } from "./k8s-tools/advanced.js";
-import { registerBlastRadiusTools } from "./k8s-tools/blast-radius.js";
-import { registerWorkloadDiffTools } from "./k8s-tools/workload-diff.js";
-import { registerSilentKillersTools } from "./k8s-tools/silent-killers.js";
-import { registerTemplateTools } from "./k8s-tools/templates.js";
-import { registerWebSocketTools } from "./k8s-tools/websocket.js";
-import { registerHelmReleaseListTools } from "./helm-tools/release-list.js";
-import { registerHelmReleaseStatusTools } from "./helm-tools/release-status.js";
-import { registerHelmReleaseHistoryTools } from "./helm-tools/release-history.js";
-import { registerHelmReleaseGetValuesTools } from "./helm-tools/release-get-values.js";
-import { registerHelmReleaseInstallTools } from "./helm-tools/release-install.js";
-import { registerHelmReleaseUninstallTools } from "./helm-tools/release-uninstall.js";
-import { registerHelmReleaseUpgradeTools } from "./helm-tools/release-upgrade.js";
-import { registerHelmReleaseRollbackTools } from "./helm-tools/release-rollback.js";
-import { registerHelmReleaseTestTools } from "./helm-tools/release-test.js";
-import { registerHelmReleaseGetInfoTools } from "./helm-tools/release-get-info.js";
-import { registerHelmSearchHubTools } from "./helm-tools/search-hub.js";
-import { registerHelmRepoManagementTools } from "./helm-tools/repo-management.js";
-import { registerHelmShowChartTools } from "./helm-tools/show-chart.js";
-import { registerHelmChartManagementTools } from "./helm-tools/chart-management.js";
-import { registerHelmChartTemplateTools } from "./helm-tools/chart-template.js";
-import { registerHelmDependencyManagementTools } from "./helm-tools/dependency-management.js";
-import { registerHelmPluginManagementTools } from "./helm-tools/plugin-management.js";
-import { registerHelmRegistryManagementTools } from "./helm-tools/registry-management.js";
-import { registerHelmEnvironmentTools } from "./helm-tools/environment.js";
-import { registerDiagnosticsTools } from "./k8s-tools/diagnostics.js";
-import { registerMultiClusterTools } from "./k8s-tools/multi-cluster.js";
+import {
+  buildCategorizedTools,
+  loadToolsetConfig,
+  selectTools,
+  describeSelection,
+  ToolsetSelection,
+} from "./toolsets.js";
 import { classifyError, ErrorContext } from "./error-handling.js";
 import { loadConfig, ServerConfig } from "./config.js";
 import { CacheManager } from "./cache-manager.js";
@@ -68,6 +37,7 @@ interface ServerInfo {
   startTime: Date;
   uptime: string;
   toolsCount: number;
+  toolset?: string;
   clusterInfo?: any;
   lastHealthCheck?: Date;
   errorCount: number;
@@ -108,6 +78,7 @@ class K8sMcpServer {
   private readonly config: ServerConfig;
   private readonly cacheManager: CacheManager;
   private readonly protectionManager: ProtectionManager;
+  private toolsetSelection!: ToolsetSelection;
   // Sliding window for error rate tracking (timestamps of recent errors)
   private recentErrors: number[] = [];
   
@@ -194,50 +165,15 @@ class K8sMcpServer {
 
   private setupHandlers(): void {
     try {
-      // Register all tool categories
-      this.registerTools(registerClusterTools(this.k8sClient));
-      this.registerTools(registerNodeTools(this.k8sClient));
-      this.registerTools(registerPodTools(this.k8sClient));
-      this.registerTools(registerWorkloadTools(this.k8sClient));
-      this.registerTools(registerNetworkingTools(this.k8sClient));
-      this.registerTools(registerStorageTools(this.k8sClient));
-      this.registerTools(registerSecurityTools(this.k8sClient));
-      this.registerTools(registerMonitoringTools(this.k8sClient));
-      this.registerTools(registerConfigTools(this.k8sClient));
-      this.registerTools(registerIncidentSnapshotTools(this.k8sClient));
-      this.registerTools(registerChangesSinceTools(this.k8sClient));
-      this.registerTools(registerAdvancedTools(this.k8sClient, this.cacheManager));
-      this.registerTools(registerBlastRadiusTools(this.k8sClient));
-      this.registerTools(registerWorkloadDiffTools(this.k8sClient));
-      this.registerTools(registerSilentKillersTools(this.k8sClient));
-      this.registerTools(registerTemplateTools(this.k8sClient));
-      this.registerTools(registerWebSocketTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseListTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseStatusTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseHistoryTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseGetValuesTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseInstallTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseUninstallTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseUpgradeTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseRollbackTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseTestTools(this.k8sClient));
-      this.registerTools(registerHelmReleaseGetInfoTools(this.k8sClient));
-      this.registerTools(registerHelmSearchHubTools(this.k8sClient));
-      this.registerTools(registerHelmRepoManagementTools(this.k8sClient));
-      this.registerTools(registerHelmShowChartTools(this.k8sClient));
-      this.registerTools(registerHelmChartManagementTools(this.k8sClient));
-      this.registerTools(registerHelmChartTemplateTools(this.k8sClient));
-      this.registerTools(registerHelmDependencyManagementTools(this.k8sClient));
-      this.registerTools(registerHelmPluginManagementTools(this.k8sClient));
-      this.registerTools(registerHelmRegistryManagementTools(this.k8sClient));
-      this.registerTools(registerHelmEnvironmentTools(this.k8sClient));
-      this.registerTools(registerDiagnosticsTools(this.k8sClient));
-      this.registerTools(registerMultiClusterTools(this.k8sClient));
+      // Register tool categories, gated by K8S_TOOLSETS (default: all — no change).
+      const categorized = buildCategorizedTools(this.k8sClient, this.cacheManager);
+      this.toolsetSelection = loadToolsetConfig();
+      this.registerTools(selectTools(categorized, this.toolsetSelection));
 
-      // Register server management tools
+      // Server management tools are always available (server info/health/protection).
       this.registerServerTools();
 
-      console.error(`Registered ${this.toolRegistry.size()} tools successfully`);
+      console.error(`Registered ${this.toolRegistry.size()} tools successfully (toolset: ${describeSelection(this.toolsetSelection)})`);
     } catch (error) {
       console.error("Failed to register tools:", error);
       throw new Error(`Tool registration failed: ${error}`, { cause: error });
@@ -455,6 +391,7 @@ class K8sMcpServer {
           startTime: this.startTime,
           uptime,
           toolsCount: this.toolRegistry.size(),
+          toolset: describeSelection(this.toolsetSelection),
           lastHealthCheck: this.lastHealthCheck,
           errorCount: this.errorCount,
           requestCount: this.requestCount,
