@@ -23,7 +23,7 @@
 [![Works with Codex](https://img.shields.io/badge/Works_with-Codex-black?logo=openai)](https://openai.com/)
 [![Works with Codex CLI](https://img.shields.io/badge/Works_with-Codex_CLI-black?logo=openai)](https://openai.com/)
 
-Production-grade Kubernetes MCP (Model Context Protocol) Server v0.30.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Native Pre-Flight Simulation & Dry-Run Engine (`dryRun: none | client | server`), Universal Query Helper & Pagination (`limit`, `continue`, `sortBy`, `outputFormat`), Universal Deletion Safety (`propagationPolicy`, `gracePeriodSeconds`, `ignoreNotFound`), Kubernetes v1.37 Alignment, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
+Production-grade Kubernetes MCP (Model Context Protocol) Server v0.30.0 - Complete cluster management via Model Context Protocol with Helm support, multi-mode protection, Native Pre-Flight Simulation & Dry-Run Engine (`dryRun: none | client | server`), Universal Query, Sorting & Formatting (`labelSelector`, `fieldSelector`, `sortBy`, `descending`, `limit`, `output`), Universal Deletion Safety (`propagationPolicy`, `gracePeriodSeconds`, `ignoreNotFound`), Kubernetes v1.37 Alignment, Enterprise Security Hardening, Secret Scrubbing, Audit Logging, Direct Exec, OpenTelemetry, Bun runtime, SSE Transport, and Bundle Optimization.
 
 > [!TIP]
 > **Status:** This package works brilliantly with **Claude Desktop**, **Claude Code**, **Gemini CLI**, **Codex**, **Codex CLI**, **Windsurf**, **Antigravity**, **Cursor**, and **GitHub Copilot**! For most clients, you can add it using `npx -y k8s-helm-mcp`.
@@ -51,7 +51,7 @@ This MCP server provides comprehensive Kubernetes cluster management capabilitie
 | **Monitoring** | Events, resource quotas, limit ranges, crash loop detection, pod/node metrics, health score, optimization suggestions |
 | **SRE** | Incident snapshot, changes-since triage, blast radius simulation, workload diff (drift detection), silent killers (preventive audit) |
 | **Safety & Dry-Run** | **Native Pre-Flight Simulation** (`client` & `server` dry-run) on all 20+ delete tools, 22 create tools, and operational mutation tools; deletion grace periods, propagation policies, and idempotent `ignoreNotFound` |
-| **Query & Pagination** | **Universal Query Engine** across all GET/LIST tools (`limit`, `continue`, `sortBy`, `sortOrder`, `outputFormat: json \| yaml`, `subresource`) |
+| **Query & Formatting** | **Universal Query Engine** across all GET/LIST tools (`labelSelector`, `fieldSelector`, `sortBy`, `descending`, `limit`, `output: json \| yaml \| name`, `subpath`) |
 | **Configuration** | Apply manifests, export YAML, validate manifests, namespace management, patch, edit, diff, wait, watch |
 | **Advanced** | Raw API queries, pod failure analysis, bulk operations, orphaned resource detection, resource age reports |
 | **Helm** | 40+ tools for releases, charts, repos, plugins, registry (install, upgrade, rollback, lint, template, search) |
@@ -1187,25 +1187,30 @@ k8s_export_resource kind=ConfigMap name=my-config scrub=true
 
 See [SECURITY.md](SECURITY.md) for detailed documentation.
 
-### Universal Query Helper & Pagination
+### Universal Query, Filtering, Sorting & Formatting
 
-All Kubernetes GET and LIST tools feature standardized querying, pagination, and multi-format output capabilities:
+All Kubernetes GET and LIST tools share a standardized set of query parameters:
 
-- **Pagination**: Supports `limit` (max records per page) and opaque `continue` tokens for seamless pagination through large clusters.
-- **Sorting**: Supports `sortBy` (JSONPath or field name, e.g. `metadata.name`, `status.phase`, `metadata.creationTimestamp`) and `sortOrder` (`asc` or `desc`).
-- **Format Flexibility**: Supports `outputFormat` (`json` or `yaml`), letting you receive raw structured JSON or clean, human/LLM-optimized YAML representations.
-- **Subresource Queries**: Supports `subresource` targeting (e.g. `status`, `scale`, `log`) on supported resources.
+- **Filtering** (list): `labelSelector` (e.g. `app=nginx`, `environment in (production,staging)`) and `fieldSelector` (e.g. `status.phase=Running`).
+- **Sorting** (list): `sortBy` (shorthand alias like `age`, `name`, `restarts`, or a path like `metadata.creationTimestamp`) with `descending` (boolean, default `false`).
+- **Limiting** (list): `limit` caps how many items are returned after filtering and sorting, to keep results within the model's context window.
+- **Formatting**: `output` — `json` (default), `yaml`, or `name` (resource names/identifiers only).
+- **Field extraction** (get): `subpath` returns just a field or sub-tree (e.g. `status.podIP`, `spec.containers[0].image`).
+- **Missing resources** (get): `ignoreNotFound` returns `{ found: false }` instead of erroring when the resource doesn't exist.
 
 **Example usage:**
 ```bash
-# List top 10 pods sorted by creation timestamp descending
-k8s_list_pods namespace=default limit=10 sortBy=metadata.creationTimestamp sortOrder=desc
+# List the 10 most recently created pods
+k8s_list_pods namespace=default limit=10 sortBy=creationTimestamp descending=true
 
-# Fetch next page using continue token
-k8s_list_pods namespace=default limit=10 continue="<continue-token>"
+# List only Running pods, names only
+k8s_list_pods namespace=default fieldSelector=status.phase=Running output=name
 
-# Export deployment in clean YAML format
-k8s_get_deployment name=frontend namespace=production outputFormat=yaml
+# Export a deployment as clean YAML
+k8s_get_deployment name=frontend namespace=production output=yaml
+
+# Extract just the pod IP
+k8s_get_pod name=frontend-abc namespace=production subpath=status.podIP
 ```
 
 ### Native Pre-Flight Simulation & Dry-Run Engine

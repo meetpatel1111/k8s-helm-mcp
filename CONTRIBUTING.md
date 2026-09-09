@@ -122,10 +122,11 @@ The server automatically validates every tool call against the current protectio
 ### Step 5: Adopt Universal Query & Safety Utilities
 
 To preserve architectural consistency across all 269 tools:
-- **GET & LIST Tools**: Enhance schema with `addQueryParameters(schema)` and use `applyQueryParameters(items, args)` from `src/utils/query-helper.ts` to support pagination (`limit`, `continue`), sorting (`sortBy`, `sortOrder`), and multi-format output (`outputFormat: json | yaml`).
-- **DELETE Tools**: Enhance schema with `addDeletionSafetyParameters(schema)` and wrap the handler in `executeWithDeletionSafety(...)` from `src/utils/safety-helper.ts` to support `dryRun`, `gracePeriodSeconds`, `propagationPolicy`, and `ignoreNotFound`.
-- **CREATE Tools**: Enhance schema with `addCreationSafetyParameters(schema)` and wrap in `executeWithCreationSafety(...)` to support `dryRun: 'none' | 'client' | 'server'`.
-- **OPERATIONAL MUTATION Tools**: Enhance schema with `addMutationSafetyParameters(schema)` and wrap in `executeWithMutationSafety(...)` to support pre-flight dry-run execution.
+- **LIST Tools**: Spread `commonListQuerySchema` into the tool's input schema and pass the results through `applySortAndLimit(items, args)` from `src/utils/query-helper.ts` — this adds `labelSelector`, `fieldSelector`, `sortBy`, `descending`, `limit`, and `output`.
+- **GET Tools**: Spread `commonGetQuerySchema` and format the response with `applyGetFormatting(data, args)` — adds `output`, `subpath`, and `ignoreNotFound` (use `isNotFoundError(err)` to honor `ignoreNotFound`).
+- **DELETE Tools**: Spread `commonDeleteQuerySchema` from `src/utils/safety-helper.ts` (adds `dryRun`, `gracePeriodSeconds`, `propagationPolicy`, `ignoreNotFound`). Short-circuit on `isClientDryRun(dryRun)` with `formatClientDryRunDelete(...)`, pass `buildServerDeleteParams(...)` to the API for server dry-run, and route errors through `handleDeleteError(...)`.
+- **CREATE Tools**: Spread `commonCreateQuerySchema` (adds `dryRun: 'none' | 'client' | 'server'`). Handle client mode with `formatClientDryRunCreate(...)` and server mode with `buildServerCreateParams(...)`.
+- **OPERATIONAL MUTATION Tools**: Spread `commonMutationQuerySchema` and use `formatClientDryRunMutation(...)` / `buildServerMutationParams(...)`; classify dry-run with `isClientDryRun` / `isServerDryRun`.
 
 ### Step 6: Update Documentation
 

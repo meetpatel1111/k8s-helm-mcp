@@ -47,14 +47,21 @@ This document provides comprehensive reference for all tools in the Kubernetes M
 
 To maintain architectural consistency and safety across all 269 tools, standard parameter schemas are universally supported:
 
-### 1. Universal Query & Pagination (All GET & LIST Tools)
-Supported across all tools listing or inspecting pods, nodes, workloads, services, ingresses, storage, RBAC, events, and namespaces:
-- `limit?: number`: Maximum items to return per page (server-side pagination).
-- `continue?: string`: Pagination continuation token from a prior response.
-- `sortBy?: string`: Property path to sort results by (e.g. `metadata.name`, `status.phase`, `metadata.creationTimestamp`).
-- `sortOrder?: 'asc' | 'desc'`: Sort direction (defaults to `asc`).
-- `outputFormat?: 'json' | 'yaml'`: Output serialization (defaults to `json`; set to `yaml` for human/LLM-optimized YAML).
-- `subresource?: string`: Query specific subresource (e.g. `status`, `scale`) where supported.
+### 1. Universal Query & Formatting (All GET & LIST Tools)
+Supported across all tools listing or inspecting pods, nodes, workloads, services, ingresses, storage, RBAC, events, and namespaces.
+
+**LIST tools:**
+- `labelSelector?: string`: Filter by labels (e.g. `app=nginx`, `environment in (production,staging)`).
+- `fieldSelector?: string`: Filter by fields (e.g. `status.phase=Running`, `spec.nodeName=node-1`).
+- `sortBy?: string`: Sort by a shorthand alias (`age`, `name`, `namespace`, `status`, `restarts`, `replicas`) or a path (e.g. `metadata.creationTimestamp`, `metadata.labels.app`).
+- `descending?: boolean`: Sort descending (default `false`).
+- `limit?: number`: Maximum items to return after filtering and sorting (guards the context window).
+- `output?: 'json' | 'yaml' | 'name'`: Output format (default `json`; `name` returns identifiers only).
+
+**GET tools:**
+- `output?: 'json' | 'yaml' | 'name'`: Output format (default `json`).
+- `subpath?: string`: Extract a specific field or sub-tree (e.g. `status.podIP`, `spec.containers[0].image`).
+- `ignoreNotFound?: boolean`: Return `{ found: false }` instead of erroring when the resource is missing.
 
 ### 2. Universal Deletion Safety (All DELETE Tools)
 Supported across all 20+ resource deletion tools (`k8s_delete_*`):
@@ -113,8 +120,8 @@ Supported across all operational workload, node, and generic modification tools:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `k8s_list_nodes` | List all nodes in the cluster with status and resource information | `limit?`, `continue?`, `sortBy?`, `sortOrder?`, `outputFormat?` |
-| `k8s_get_node` | Get detailed information about a specific node | `name` (required), `subresource?`, `outputFormat?` |
+| `k8s_list_nodes` | List all nodes in the cluster with status and resource information | `labelSelector?`, `fieldSelector?`, `sortBy?`, `descending?`, `limit?`, `output?` |
+| `k8s_get_node` | Get detailed information about a specific node | `name` (required), `output?`, `subpath?`, `ignoreNotFound?` |
 | `k8s_cordon_node` | Mark a node as unschedulable (cordon) | `name`, `dryRun?` |
 | `k8s_uncordon_node` | Mark a node as schedulable (uncordon) | `name`, `dryRun?` |
 | `k8s_drain_node` | Drain a node by cordoning and evicting all pods | `name`, `force?: boolean`, `gracePeriodSeconds?: number`, `dryRun?` |
@@ -131,8 +138,8 @@ Supported across all operational workload, node, and generic modification tools:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `k8s_list_pods` | List pods in a namespace or across all namespaces | `namespace?`, `labelSelector?`, `fieldSelector?`, `limit?`, `continue?`, `sortBy?`, `sortOrder?`, `outputFormat?` |
-| `k8s_get_pod` | Get detailed information about a specific pod | `name` (required), `namespace?`, `subresource?`, `outputFormat?` |
+| `k8s_list_pods` | List pods in a namespace or across all namespaces | `namespace?`, `labelSelector?`, `fieldSelector?`, `sortBy?`, `descending?`, `limit?`, `output?` |
+| `k8s_get_pod` | Get detailed information about a specific pod | `name` (required), `namespace?`, `output?`, `subpath?`, `ignoreNotFound?` |
 | `k8s_delete_pod` | Delete a pod | `name`, `namespace?`, `gracePeriodSeconds?`, `propagationPolicy?`, `ignoreNotFound?`, `dryRun?`, `force?: boolean` |
 | `k8s_get_pod_logs` | Get logs from pod, deployment, statefulset, daemonset, job, or service | `name?`, `namespace?`, `container?`, `tailLines?`, `follow?: boolean`, `previous?: boolean`, `since?`, `timestamps?: boolean` |
 | `k8s_stream_logs` | Stream pod logs in real-time (returns stream info) | `pod`, `namespace`, `container?`, `follow?: boolean`, `tailLines?` |
@@ -160,8 +167,8 @@ Supported across all operational workload, node, and generic modification tools:
 
 | Tool | Description | Key Parameters |
 |------|-------------|----------------|
-| `k8s_list_deployments` | List all deployments with status and replica info | `namespace?`, `limit?`, `continue?`, `sortBy?`, `sortOrder?`, `outputFormat?` |
-| `k8s_get_deployment` | Get detailed information about a deployment | `name` (required), `namespace?`, `subresource?`, `outputFormat?` |
+| `k8s_list_deployments` | List all deployments with status and replica info | `namespace?`, `labelSelector?`, `fieldSelector?`, `sortBy?`, `descending?`, `limit?`, `output?` |
+| `k8s_get_deployment` | Get detailed information about a deployment | `name` (required), `namespace?`, `output?`, `subpath?`, `ignoreNotFound?` |
 | `k8s_create_deployment` | Create a deployment imperatively | `name`, `image` (required), `namespace?`, `replicas?`, `port?`, `env?`, `labels?`, `dryRun?` |
 | `k8s_delete_deployment` | Delete a deployment | `name`, `namespace?`, `gracePeriodSeconds?`, `propagationPolicy?`, `ignoreNotFound?`, `dryRun?`, `force?: boolean` |
 | `k8s_scale_deployment` | Scale a deployment to specific number of replicas | `name` (required), `replicas` (required), `namespace?`, `dryRun?` |

@@ -1,7 +1,7 @@
-?# MCP Kubernetes Server Performance & Advanced Features Comparison
+# MCP Kubernetes Server Performance & Advanced Features Comparison
 
 **Comparison Date:** May 1, 2026 (Updated Sept 2026)  
-**Versions:** mcp-server-kubernetes v3.5.0 vs k8s-helm-mcp v0.29.0
+**Versions:** mcp-server-kubernetes v3.5.0 vs k8s-helm-mcp v0.30.0 *(performance figures measured on v0.29.0; v0.30.0's move to the undici HTTP backend does not change the architectural results below)*
 
 **Repository Links:**
 - [k8s-helm-mcp](https://github.com/meetpatel1111/k8s-helm-mcp) - meetpatel1111
@@ -48,22 +48,22 @@
 
 ### Performance Reality
 
-| Metric                             | mcp-server-kubernetes | k8s-helm-mcp v0.29.0            | Why                                                   |
+| Metric                             | mcp-server-kubernetes | k8s-helm-mcp            | Why                                                   |
 | ------------------------------------| -----------------------| -----------------------------------| -------------------------------------------------------|
 | **Cold Start**                     | 50-100ms              | 50-150ms (Bun) / 150-300ms (Node) | Both support Bun, k8s-helm-mcp has more features    |
-| **Request Latency (Read/Write)**   | 80-150ms              | 5-25ms                            | Process spawn vs `node-fetch` direct API call |
+| **Request Latency (Read/Write)**   | 80-150ms              | 5-25ms                            | Process spawn vs direct API call (undici HTTP backend) |
 | **Request Latency (Exec)**         | 80-150ms              | 80-150ms                          | Both use execFileSync for direct execution            |
 | **Request Latency (Port-Forward)** | 80-150ms              | 80-150ms                          | Both use process spawning for native port-forwarding |
-| **Memory Footprint**               | High (subprocess)     | Minimal (`node-fetch`)            | Native Fetch API replaces deprecated `request` wrapper |
+| **Memory Footprint**               | High (subprocess)     | Minimal (undici pool)             | Pooled HTTP client replaces deprecated `request` wrapper |
 | **Cached Reads**                   | N/A                   | 1-5ms                             | k8s-helm-mcp has caching with hit/miss tracking     |
 | **Batch Operations**               | Sequential            | Parallel (20-30% faster)          | k8s-helm-mcp has Promise.all batching               |
 | **Throughput**                     | 10-20 req/s           | 100-200 req/s                      | Process overhead vs modern HTTP client pooling        |
 
-**Insight:** For long-running processes (typical MCP servers), cold start difference is negligible. For read/write operations, k8s-helm-mcp wins significantly with direct API calls. The `v0.22.1` upgrade to `@kubernetes/client-node` v1.4.0 completely replaced the deprecated `request` library with `node-fetch`, resulting in drastically lower memory overhead, faster TCP connection handling, and native JavaScript performance. For exec/port-forward, both servers execute natively, but `k8s-helm-mcp` uniquely provides a WebSocket mode and command generation for highly interactive TTY sessions that MCP UI clients cannot natively render. The `v0.29.0` release further enhances performance and safety with universal server-side pagination, field sorting, native pre-flight simulation (client and server dry-run) across all creations, deletions, and operational mutations, and universal cascade deletion safety.
+**Insight:** For long-running processes (typical MCP servers), cold start difference is negligible. For read/write operations, k8s-helm-mcp wins significantly with direct API calls. The `v0.22.1` upgrade to `@kubernetes/client-node` v1.4.0 retired the deprecated `request` library, and `v0.30.0` moved to client-node v2.x on the undici HTTP backend with a bounded, warm connection pool — keeping memory overhead low and TCP connection handling fast. For exec/port-forward, both servers execute natively, but `k8s-helm-mcp` uniquely provides a WebSocket mode and command generation for highly interactive TTY sessions that MCP UI clients cannot natively render. The `v0.29.0` release added universal result limiting, filtering and field sorting, native pre-flight simulation (client and server dry-run) across all creations, deletions, and operational mutations, and universal cascade deletion safety; `v0.30.0` adds registration-time toolset selection (`K8S_TOOLSETS`) for least-privilege deployments.
 
 ### Feature Completeness
 
-| Category | mcp-server-kubernetes | k8s-helm-mcp v0.29.0 |
+| Category | mcp-server-kubernetes | k8s-helm-mcp |
 |----------|---------------------|------------------------|
 | **Tools** | 25 basic tools | 269 comprehensive tools |
 | **Helm** | 3 operations | 40+ operations (full CLI) |
