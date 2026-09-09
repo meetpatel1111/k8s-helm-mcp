@@ -2450,15 +2450,17 @@ export function registerWorkloadTools(k8sClient: K8sClient): { tool: Tool; handl
           
           // Get resource labels for selector
           let selector: Record<string, string> = { app: name };
-          
-          // Try to get actual selector from resource
-          if (resource.toLowerCase() === "deployment" || resource.toLowerCase() === "deployments") {
+
+          // Try to get actual selector from the resource. Skipped for client
+          // dry-run, which must stay local and never contact the cluster; the
+          // preview falls back to the { app: name } selector.
+          if (!isClientDryRun(dryRun) && (resource.toLowerCase() === "deployment" || resource.toLowerCase() === "deployments")) {
             try {
               const appsApi = (k8sClient as any).kc.makeApiClient(k8s.AppsV1Api);
               const deploy = await appsApi.readNamespacedDeployment({ name, namespace: ns }, {});
               selector = deploy.spec?.selector?.matchLabels || selector;
             } catch {
-              // Ignore error if resource not found or during client dry run
+              // Ignore error if resource not found
             }
           }
           
